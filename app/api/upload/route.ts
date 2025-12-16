@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server"
 import connectDB from "@/lib/mongodb"
 
+export const runtime = "nodejs"
+export const dynamic = "force-dynamic"
+
 export async function POST(req: Request) {
   try {
     const form = await req.formData()
@@ -13,14 +16,16 @@ export async function POST(req: Request) {
       )
     }
 
-    // 🔥 Convert Web File → Buffer
+    // Convert Web File → Buffer
     const arrayBuffer = await file.arrayBuffer()
     const buffer = Buffer.from(arrayBuffer)
 
     const fd = new FormData()
     fd.append("image", new Blob([buffer]), file.name)
 
-    const r = await fetch("http://127.0.0.1:8000/run", {
+    const API_URL = process.env.INFERENCE_API_URL!
+
+    const r = await fetch(`${API_URL}/run`, {
       method: "POST",
       body: fd,
     })
