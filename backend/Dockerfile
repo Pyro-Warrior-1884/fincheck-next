@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-# Prevent Python from buffering stdout/stderr
+# Prevent Python from buffering logs
 ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
@@ -14,12 +14,15 @@ RUN apt-get update && apt-get install -y \
     libxrender1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python deps first (better caching)
+# Install Python dependencies first (cache-friendly)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy backend source code
 COPY . .
+
+# 🔥 DOWNLOAD MODELS AT BUILD TIME (IMPORTANT)
+RUN python download_models.py
 
 # Render expects the app to listen on this port
 EXPOSE 8000

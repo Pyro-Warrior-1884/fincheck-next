@@ -10,7 +10,7 @@ import torchvision.transforms as transforms
 from model_def import MNISTCNN
 import download_models
 
-download_models.download()
+# download_models.download()
 
 
 app = FastAPI()
