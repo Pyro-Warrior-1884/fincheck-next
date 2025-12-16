@@ -4,13 +4,16 @@ import { useEffect, useState } from "react"
 import { useParams } from "next/navigation"
 import ChartSection from "@/components/ChartSection"
 
+type ModelResult = {
+  prediction?: number
+  confidence?: number
+  latency_ms?: number
+  ram_mb?: number
+  cold_start?: boolean
+}
+
 type ResultDoc = {
-  data: Record<
-    string,
-    {
-      confidence?: number
-    }
-  >
+  data: Record<string, ModelResult>
 }
 
 export default function ResultPage() {
@@ -25,7 +28,7 @@ export default function ResultPage() {
 
     fetch(`/api/results/${id}`)
       .then(async (r) => {
-        if (!r.ok) throw new Error("Failed")
+        if (!r.ok) throw new Error("Failed to fetch")
         return r.json()
       })
       .then((data) => {
@@ -36,7 +39,11 @@ export default function ResultPage() {
   }, [id])
 
   if (loading) {
-    return <p className="p-8">Loading results…</p>
+    return (
+      <p className="p-8 text-gray-500">
+        Loading inference results…
+      </p>
+    )
   }
 
   if (!doc || !doc.data) {
@@ -48,36 +55,49 @@ export default function ResultPage() {
   }
 
   /**
-   * 🔹 Transform backend data → chart data
-   * Safely filters invalid values
+   * 🔹 Transform backend response → chart-friendly format
+   * Filters out invalid / incomplete models safely
    */
   const chartData = Object.entries(doc.data)
-    .map(([model, value]) => ({
+    .map(([model, v]) => ({
       model,
+      prediction:
+        typeof v.prediction === "number"
+          ? v.prediction
+          : -1,
       confidence:
-        typeof value?.confidence === "number"
-          ? value.confidence
+        typeof v.confidence === "number"
+          ? v.confidence
           : 0,
+      latency_ms:
+        typeof v.latency_ms === "number"
+          ? v.latency_ms
+          : 0,
+      ram_mb:
+        typeof v.ram_mb === "number"
+          ? v.ram_mb
+          : 0,
+      cold_start: Boolean(v.cold_start),
     }))
-    .filter((item) => item.confidence > 0)
+    .filter((m) => m.confidence > 0)
 
   return (
-    <div className="mx-auto max-w-5xl p-8 space-y-10">
+    <div className="mx-auto max-w-6xl p-8 space-y-10">
       <h1 className="text-3xl font-bold tracking-tight">
         Inference Results
       </h1>
 
-      {/* 📊 Chart */}
+      {/* 📊 Charts */}
       {chartData.length > 0 && (
         <ChartSection data={chartData} />
       )}
 
-      {/* 📄 Raw output */}
-      <div className="rounded-xl border bg-gray-50 p-6">
+      {/* 📄 Raw JSON output */}
+      <div className="rounded-2xl border bg-gray-50 p-6">
         <h2 className="mb-3 text-lg font-semibold">
           Raw Model Output
         </h2>
-        <pre className="overflow-auto text-sm text-gray-800">
+        <pre className="overflow-auto rounded-lg bg-white p-4 text-sm text-gray-800">
           {JSON.stringify(doc.data, null, 2)}
         </pre>
       </div>
