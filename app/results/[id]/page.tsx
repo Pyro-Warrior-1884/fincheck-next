@@ -8,7 +8,7 @@ type ResultDoc = {
   data: Record<
     string,
     {
-      confidence: number
+      confidence?: number
     }
   >
 }
@@ -24,7 +24,10 @@ export default function ResultPage() {
     if (!id) return
 
     fetch(`/api/results/${id}`)
-      .then((r) => r.json())
+      .then(async (r) => {
+        if (!r.ok) throw new Error("Failed")
+        return r.json()
+      })
       .then((data) => {
         setDoc(data)
         setLoading(false)
@@ -36,30 +39,42 @@ export default function ResultPage() {
     return <p className="p-8">Loading results…</p>
   }
 
-  if (!doc) {
-    return <p className="p-8 text-red-600">Failed to load results</p>
+  if (!doc || !doc.data) {
+    return (
+      <p className="p-8 text-red-600">
+        Failed to load results
+      </p>
+    )
   }
 
-  // 🔹 Transform backend data → chart data
-  const chartData = Object.entries(doc.data).map(
-    ([model, value]) => ({
+  /**
+   * 🔹 Transform backend data → chart data
+   * Safely filters invalid values
+   */
+  const chartData = Object.entries(doc.data)
+    .map(([model, value]) => ({
       model,
-      confidence: value.confidence, // 👈 change here if backend differs
-    })
-  )
+      confidence:
+        typeof value?.confidence === "number"
+          ? value.confidence
+          : 0,
+    }))
+    .filter((item) => item.confidence > 0)
 
   return (
-    <div className="mx-auto max-w-5xl p-8 space-y-8">
+    <div className="mx-auto max-w-5xl p-8 space-y-10">
       <h1 className="text-3xl font-bold tracking-tight">
         Inference Results
       </h1>
 
       {/* 📊 Chart */}
-      <ChartSection data={chartData} />
+      {chartData.length > 0 && (
+        <ChartSection data={chartData} />
+      )}
 
       {/* 📄 Raw output */}
       <div className="rounded-xl border bg-gray-50 p-6">
-        <h2 className="mb-2 text-lg font-semibold">
+        <h2 className="mb-3 text-lg font-semibold">
           Raw Model Output
         </h2>
         <pre className="overflow-auto text-sm text-gray-800">
