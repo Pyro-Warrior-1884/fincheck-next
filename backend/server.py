@@ -125,7 +125,7 @@ async def verify(
 ):
     pil_img = Image.open(image.file).convert("L")
 
-    # STEP 1: OCR (digits only)
+    # OCR (digits only)
     ocr_text = pytesseract.image_to_string(
         pil_img,
         config="--psm 7 -c tessedit_char_whitelist=0123456789"
@@ -142,7 +142,6 @@ async def verify(
 
     errors = []
 
-    # STEP 2: Character-level comparison
     min_len = min(len(raw_text), len(ocr_text))
 
     for i in range(min_len):
@@ -154,13 +153,11 @@ async def verify(
                 "reason": "Ambiguous character normalized by OCR"
             })
 
-    # Length mismatch
     if len(raw_text) != len(ocr_text):
         errors.append({
             "reason": "Length mismatch between typed input and OCR output"
         })
 
-    # STEP 3: Final decision
     if errors:
         return {
             "verdict": "INVALID_OR_AMBIGUOUS",

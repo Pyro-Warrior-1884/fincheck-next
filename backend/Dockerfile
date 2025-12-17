@@ -3,11 +3,8 @@ FROM python:3.12-slim
 ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 
-# -------------------------
-# System dependencies
-# -------------------------
+# System deps for OCR
 RUN apt-get update && apt-get install -y \
-    build-essential \
     tesseract-ocr \
     tesseract-ocr-eng \
     libglib2.0-0 \
@@ -17,28 +14,14 @@ RUN apt-get update && apt-get install -y \
     libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
-# -------------------------
-# Python dependencies
-# -------------------------
+# Python deps
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# -------------------------
-# Copy backend code
-# -------------------------
+# Copy code
 COPY . .
 
-# -------------------------
-# Download ML models at build time
-# -------------------------
-RUN python download_models.py
-
-# Fail build if models missing
-RUN ls -lh /app/model
-
-# -------------------------
-# Expose & run
-# -------------------------
 EXPOSE 8000
 
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]
+# ⚠️ IMPORTANT: use $PORT for Render
+CMD ["sh", "-c", "uvicorn server:app --host 0.0.0.0 --port $PORT"]
