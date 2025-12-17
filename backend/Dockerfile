@@ -1,6 +1,12 @@
 FROM python:3.12-slim
 
-ENV PYTHONUNBUFFERED=1
+# -------------------------
+# Environment
+# -------------------------
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PORT=8000
+
 WORKDIR /app
 
 # -------------------------
@@ -29,15 +35,27 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # -------------------------
-# Optional sanity check (safe)
+# ⬇️ DOWNLOAD MODELS AT BUILD TIME
 # -------------------------
 RUN python - <<EOF
-import pytesseract
-print("Tesseract OK:", pytesseract.get_tesseract_version())
+from download_models import download
+download()
 EOF
 
 # -------------------------
-# Expose & run (Render uses $PORT)
+# Sanity check (optional)
+# -------------------------
+RUN python - <<EOF
+import os
+print("Model files:", os.listdir("model"))
+EOF
+
+# -------------------------
+# Expose port
 # -------------------------
 EXPOSE 8000
-CMD ["sh", "-c", "uvicorn server:app --host 0.0.0.0 --port $PORT"]
+
+# -------------------------
+# Run server
+# -------------------------
+CMD exec uvicorn server:app --host 0.0.0.0 --port ${PORT}
