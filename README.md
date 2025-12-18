@@ -486,3 +486,6 @@ All models are packaged at Docker build time, eliminating runtime dependencies a
 ## Result
 
 The proposed system provides a robust, reproducible, and extensible framework for evaluating optimized CNN models and validating handwritten numeric input in real-world scenarios.
+
+![CodeQL](https://github.com/mukesh1352/fincheck-next/actions/workflows/codeql.yml/badge.svg)
+
