@@ -9,6 +9,18 @@ The platform is:
 
 ---
 
+## Project Type
+
+This is a **research-driven, project-based system** developed to study
+the performance trade-offs of optimized CNN models and to evaluate OCR-based
+numeric verification pipelines in realistic deployment conditions.
+
+The repository intentionally includes:
+- Detailed methodology
+- Full reproducibility instructions
+- Production-style deployment considerations
+---
+
 ## Problem Statement
 
 Handwritten numeric input is widely used in financial, banking, and identity verification systems. However, such input introduces two major challenges:
