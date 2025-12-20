@@ -11,13 +11,11 @@ type ResultDoc = {
   data: Record<
     string,
     {
-      confidence?: number
+      confidence_percent?: number
       latency_ms?: number
-      throughput?: number
       entropy?: number
       stability?: number
       ram_mb?: number
-      cold_start_ms?: number
     }
   >
 }
@@ -67,14 +65,18 @@ export default function ResultPage() {
 
       return {
         model,
-        confidence: typeof v.confidence === "number" ? v.confidence : 0,
-        latency_ms: typeof v.latency_ms === "number" ? v.latency_ms : 0,
-        throughput: typeof v.throughput === "number" ? v.throughput : 0,
-        entropy: typeof v.entropy === "number" ? v.entropy : 0,
-        stability: typeof v.stability === "number" ? v.stability : 0,
-        ram_mb: typeof v.ram_mb === "number" ? v.ram_mb : 0,
-        cold_start_ms:
-          typeof v.cold_start_ms === "number" ? v.cold_start_ms : 0,
+        confidence_percent:
+          typeof v.confidence_percent === "number"
+            ? v.confidence_percent
+            : 0,
+        latency_ms:
+          typeof v.latency_ms === "number" ? v.latency_ms : 0,
+        entropy:
+          typeof v.entropy === "number" ? v.entropy : 0,
+        stability:
+          typeof v.stability === "number" ? v.stability : 0,
+        ram_delta_mb:
+          typeof v.ram_mb === "number" ? v.ram_mb : 0,
       }
     })
   }, [doc])
@@ -106,9 +108,8 @@ export default function ResultPage() {
           Inference Results
         </h1>
         <p className="text-sm text-gray-500">
-          Comparative analysis of optimized MNIST models across
-          confidence, latency, throughput, entropy, stability,
-          memory usage, and cold-start behavior
+          Comparative analysis of optimized MNIST models
+          using single-image web inference metrics.
         </p>
       </header>
 

@@ -1,4 +1,4 @@
-import { ChartItem } from "./types"
+import type { ChartItem } from "./types"
 
 export const METRIC_META: Record<
   keyof ChartItem,
@@ -14,7 +14,7 @@ export const METRIC_META: Record<
     higherIsBetter: true,
   },
 
-  confidence: {
+  confidence_percent: {
     label: "Confidence (%)",
     description:
       "Maximum softmax probability. Higher confidence indicates more certain predictions.",
@@ -28,38 +28,24 @@ export const METRIC_META: Record<
     higherIsBetter: false,
   },
 
-  throughput: {
-    label: "Throughput (samples/sec)",
-    description:
-      "Number of images processed per second. Higher throughput is better.",
-    higherIsBetter: true,
-  },
-
   entropy: {
     label: "Prediction Entropy",
     description:
-      "Measures uncertainty in output distribution. Lower entropy indicates more confident predictions.",
+      "Uncertainty of the output probability distribution. Lower values indicate more confident predictions.",
     higherIsBetter: false,
   },
 
   stability: {
     label: "Logit Stability",
     description:
-      "Standard deviation of logits. Lower values indicate more stable outputs.",
+      "Standard deviation of logits across classes. Lower values indicate more stable predictions.",
     higherIsBetter: false,
   },
 
-  ram_mb: {
+  ram_delta_mb: {
     label: "RAM Usage (MB)",
     description:
       "Additional memory consumed during inference. Lower memory usage is better.",
-    higherIsBetter: false,
-  },
-
-  cold_start_ms: {
-    label: "Cold Start Time (ms)",
-    description:
-      "Time penalty when model is loaded for the first time. Lower is better.",
     higherIsBetter: false,
   },
 }

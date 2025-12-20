@@ -1,10 +1,8 @@
 export type ChartItem = {
   model: string
-  confidence: number
+  confidence_percent: number
   latency_ms: number
-  throughput: number
   entropy: number
   stability: number
-  ram_mb: number
-  cold_start_ms: number
+  ram_delta_mb: number
 }

@@ -11,6 +11,7 @@ import pytesseract
 import re
 from model_def import MNISTCNN
 
+
 # -------------------- App setup --------------------
 app = FastAPI()
 
@@ -73,58 +74,46 @@ def health():
 # ==================================================
 @app.post("/run")
 async def run(image: UploadFile = File(...)):
-    print("/run called...")
     models = load_mnist_models()
 
     img = Image.open(image.file).convert("L")
     img = transform(img).unsqueeze(0).to(DEVICE)
 
     process = psutil.Process()
-
     results = {}
 
     for name, model in models.items():
-        # ---------------- MEMORY BEFORE ----------------
+        model.eval()
+
+        # -------- Memory before --------
         mem_before = process.memory_info().rss / 1024 / 1024
 
-        # ---------------- INFERENCE ----------------
+        # -------- Inference --------
         start = time.perf_counter()
         with torch.no_grad():
             logits = model(img)
             probs = torch.softmax(logits, dim=1)
         latency_ms = (time.perf_counter() - start) * 1000
 
-        # ---------------- MEMORY AFTER ----------------
+        # -------- Memory after --------
         mem_after = process.memory_info().rss / 1024 / 1024
 
-        # ---------------- METRICS ----------------
+        # -------- Metrics --------
         confidence = probs.max().item() * 100
-
-        # Entropy (numerically stable)
-        entropy = float(
-            -(probs * torch.log(probs + 1e-8)).sum().item()
-        )
-
-        # Stability proxy (logit spread)
+        entropy = float(-(probs * torch.log(probs + 1e-8)).sum().item())
         stability = float(logits.std().item())
-
-        # Throughput (samples/sec)
-        throughput = 1000.0 / latency_ms if latency_ms > 0 else 0.0
-
-        # Cold start (0 = warm, frontend still renders)
-        cold_start_ms = 0.0
+        ram_mb = mem_after - mem_before
 
         results[name] = {
-            "confidence": round(confidence, 2),
             "latency_ms": round(latency_ms, 2),
-            "throughput": round(throughput, 2),
+            "confidence_percent": round(confidence, 2),
             "entropy": round(entropy, 4),
             "stability": round(abs(stability), 4),
-            "ram_mb": round(mem_after - mem_before, 2),
-            "cold_start_ms": cold_start_ms,
+            "ram_mb": round(ram_mb, 2),
         }
 
     return results
+
 
 # ==================================================
 # OCR + CHARACTER ERROR DETECTION
