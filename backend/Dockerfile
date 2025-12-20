@@ -1,66 +1,84 @@
 FROM python:3.12-slim
 
-# -------------------------
+# --------------------------------------------------
 # Environment
-# -------------------------
+# --------------------------------------------------
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PORT=8000 \
     TESSDATA_PREFIX=/usr/share/tesseract-ocr/4.00/tessdata
 
 WORKDIR /app
 
-# -------------------------
-# System dependencies
-# -------------------------
-RUN apt-get update \
- && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    tesseract-ocr \
-    tesseract-ocr-eng \
-    libglib2.0-0 \
-    libsm6 \
-    libxext6 \
-    libxrender1 \
-    libgl1 \
- && rm -rf /var/lib/apt/lists/*
+# --------------------------------------------------
+# System dependencies (OCR + Torch runtime)
+# --------------------------------------------------
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        tesseract-ocr \
+        tesseract-ocr-eng \
+        libglib2.0-0 \
+        libsm6 \
+        libxext6 \
+        libxrender1 \
+        libgl1 \
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
-# -------------------------
-# Python dependencies
-# -------------------------
+# --------------------------------------------------
+# Python dependencies (cached layer)
+# --------------------------------------------------
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
 
-# 🔥 ENSURE pytesseract IS PRESENT (CRITICAL)
-RUN pip install --no-cache-dir pytesseract
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir pytesseract
 
-# -------------------------
-# Copy backend code
-# -------------------------
+# --------------------------------------------------
+# Copy application code
+# --------------------------------------------------
 COPY . .
 
-# -------------------------
-# ⬇️ DOWNLOAD MODELS AT BUILD TIME
-# -------------------------
+# --------------------------------------------------
+# Download models at build time
+# --------------------------------------------------
 RUN python - <<EOF
 from download_models import download
 download()
 EOF
 
-# -------------------------
-# Sanity checks
-# -------------------------
+# --------------------------------------------------
+# Sanity check (fail fast)
+# --------------------------------------------------
 RUN python - <<EOF
 import pytesseract, os
-print("✅ pytesseract version:", pytesseract.get_tesseract_version())
-print("✅ Model files:", os.listdir("model"))
+print("✅ pytesseract:", pytesseract.get_tesseract_version())
+models = os.listdir("model")
+assert models, "❌ No models found"
+print("✅ Models:", models)
 EOF
 
-# -------------------------
-# Expose port
-# -------------------------
-EXPOSE 8000
+# --------------------------------------------------
+# Create non-root user (Render-safe)
+# --------------------------------------------------
+RUN useradd --create-home --uid 10001 appuser \
+    && chown -R appuser:appuser /app
 
-# -------------------------
-# Run server
-# -------------------------
-CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]
+USER appuser
+
+# --------------------------------------------------
+# Healthcheck (Render-compatible)
+# --------------------------------------------------
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD python - <<EOF || exit 1
+import urllib.request
+urllib.request.urlopen("http://127.0.0.1:${PORT}/health", timeout=2)
+EOF
+
+# --------------------------------------------------
+# Run server (Render REQUIRED format)
+# --------------------------------------------------
+CMD ["sh", "-c", \
+     "uvicorn server:app \
+      --host 0.0.0.0 \
+      --port ${PORT} \
+      --workers 2 \
+      --timeout-keep-alive 30"]
