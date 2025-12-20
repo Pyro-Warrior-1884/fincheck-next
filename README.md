@@ -48,14 +48,13 @@ FinCheck addresses these challenges by combining systematic model benchmarking w
 
 ### Model Benchmarking
 - Executes multiple optimized MNIST CNN variants
-- Collects per-model metrics:
-  - Confidence
-  - Latency
-  - Throughput
-  - Entropy
-  - Stability
-  - RAM usage
-  - Cold-start time
+- Collects per-model inference metrics:
+  - Confidence (prediction certainty)
+  - Inference latency
+  - Prediction entropy (uncertainty)
+  - Output stability
+  - Runtime memory usage
+
 
 ### OCR-Based Verification
 - Uses Tesseract OCR
@@ -74,7 +73,8 @@ FinCheck addresses these challenges by combining systematic model benchmarking w
 Frontend (Next.js + TypeScript)
  ├─ Upload handwritten digit
  ├─ Run inference
- ├─ Visualize metrics
+ ├─ Visualize and explain inference metrics
+ ├─ Compare all models or inspect a single selected model
  └─ Verify typed input (OCR)
 
 Backend (FastAPI + PyTorch)
@@ -367,13 +367,17 @@ This ensures:
 
 ## Visualization and Metrics
 
-Each visualization:
+### Explainable Visualization
 
-* Explains the metric being displayed
-* Clearly states whether higher or lower values are better
-* Automatically identifies the best-performing model per metric
+To support non-expert users, the visualization layer provides:
 
-The visualization layer is suitable for academic reports, performance analysis, and optimization studies.
+- Inline explanations for each metric (what it means and why it matters)
+- Clear indication of whether higher or lower values are preferable
+- Automatic identification of the best-performing model per metric
+- A human-readable model recommendation based on inference efficiency
+- Access to raw JSON outputs for transparency and reproducibility
+
+This design allows both technical and non-technical users to interpret results without requiring prior machine learning expertise.
 
 ---
 
@@ -392,34 +396,28 @@ Runs inference on all optimized MNIST CNN variants and returns performance metri
 Content-Type: `multipart/form-data`
 
 #### Response (Example)
-
-```json
+```zsh
 {
   "baseline_mnist.pth": {
-    "confidence": 98.73,
+    "confidence_percent": 98.73,
     "latency_ms": 4.21,
-    "throughput": 237.53,
     "entropy": 0.0421,
     "stability": 0.3114,
-    "ram_mb": 1.82,
-    "cold_start_ms": 0
+    "ram_mb": 1.82
   }
 }
 ```
 
 #### Metrics Description
 
-| Metric        | Description                 | Preferred |
-| ------------- | --------------------------- | --------- |
-| confidence    | Maximum softmax probability | Higher    |
-| latency_ms    | Inference time per image    | Lower     |
-| throughput    | Images per second           | Higher    |
-| entropy       | Prediction uncertainty      | Lower     |
-| stability     | Logit standard deviation    | Lower     |
-| ram_mb        | RAM usage during inference  | Lower     |
-| cold_start_ms | Initial load overhead       | Lower     |
+| Metric              | Description                                   | Preferred |
+|---------------------|-----------------------------------------------|-----------|
+| confidence_percent  | Model certainty in its prediction             | Higher    |
+| latency_ms          | Time taken to process one image               | Lower     |
+| entropy             | Prediction uncertainty                        | Lower     |
+| stability            | Consistency of model output                   | Lower     |
+| ram_mb              | Memory usage during inference                 | Lower     |
 
----
 
 ### POST `/verify` — OCR-Based Input Verification
 
@@ -497,7 +495,24 @@ All models are packaged at Docker build time, eliminating runtime dependencies a
 
 ## Result
 
-The proposed system provides a robust, reproducible, and extensible framework for evaluating optimized CNN models and validating handwritten numeric input in real-world scenarios.
+The proposed system delivers a reproducible and explainable framework for
+evaluating optimized CNN models and verifying handwritten numeric input.
+
+Key outcomes include:
+- Transparent comparison of model performance under identical conditions
+- User-friendly interpretation of inference metrics through visual explanations
+- Support for both expert analysis and general-user understanding
+- Robust OCR-based validation of handwritten numeric input
+
+The system is suitable for academic evaluation, deployment benchmarking,
+and real-world numeric verification workflows.
+## Target Users
+
+- Researchers evaluating model optimization techniques
+- Students studying CNN performance trade-offs
+- Developers deploying lightweight inference systems
+- End users requiring transparent numeric verification
+
 
 ![CodeQL](https://github.com/mukesh1352/fincheck-next/actions/workflows/codeql.yml/badge.svg)
 
