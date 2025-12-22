@@ -5,7 +5,7 @@ import { useParams } from "next/navigation"
 import ChartSection from "@/components/charts/ChartSection"
 import type { ChartItem } from "@/components/charts/metrics/types"
 
-/* ---------------- CONSTANTS ---------------- */
+/* ================= CONSTANTS ================= */
 
 const MODEL_ORDER = [
   "baseline_mnist.pth",
@@ -16,7 +16,7 @@ const MODEL_ORDER = [
   "ws_mnist.pth",
 ]
 
-/* ---------------- TYPES ---------------- */
+/* ================= TYPES ================= */
 
 type ResultDoc = {
   data: Record<string, any>
@@ -28,7 +28,7 @@ type ResultDoc = {
   }
 }
 
-/* ---------------- META NORMALIZATION ---------------- */
+/* ================= HELPERS ================= */
 
 function normalizeMeta(meta?: ResultDoc["meta"]) {
   return {
@@ -39,38 +39,18 @@ function normalizeMeta(meta?: ResultDoc["meta"]) {
   }
 }
 
-/* ---------------- DATASET-AWARE SCORING ---------------- */
-
 function scoreModel(m: ChartItem, datasetType?: string) {
-  if (!datasetType) {
-    // Single image → prioritize speed
-    return -m.latency_ms
+  if (!datasetType) return -m.latency_ms
+
+  if (datasetType.includes("NOISY") || datasetType.includes("BLUR")) {
+    return -2 * m.entropy - 2 * m.stability + 0.5 * m.confidence_percent
   }
 
-  if (
-    datasetType.includes("NOISY") ||
-    datasetType.includes("BLUR")
-  ) {
-    // Robustness-focused
-    return (
-      -2.0 * m.entropy -
-      2.0 * m.stability +
-      0.5 * m.confidence_percent
-    )
-  }
-
-  // Clean dataset
-  return (
-    m.confidence_percent -
-    m.entropy -
-    0.2 * m.latency_ms
-  )
+  return m.confidence_percent - m.entropy - 0.2 * m.latency_ms
 }
 
-/* ---------------- OVERALL SUMMARY ---------------- */
-
 function getOverallSummary(data: ChartItem[]) {
-  if (data.length === 0) return null
+  if (!data.length) return null
 
   return {
     fastest: [...data].sort((a, b) => a.latency_ms - b.latency_ms)[0],
@@ -80,7 +60,7 @@ function getOverallSummary(data: ChartItem[]) {
   }
 }
 
-/* ==================================================== */
+/* ================= PAGE ================= */
 
 export default function ResultPage() {
   const { id } = useParams<{ id: string }>()
@@ -88,7 +68,7 @@ export default function ResultPage() {
   const [loading, setLoading] = useState(true)
   const [selectedModel, setSelectedModel] = useState("ALL")
 
-  /* ---------------- FETCH ---------------- */
+  /* -------- Fetch -------- */
 
   useEffect(() => {
     fetch(`/api/results/${id}`)
@@ -97,106 +77,86 @@ export default function ResultPage() {
       .finally(() => setLoading(false))
   }, [id])
 
-  /* ---------------- NORMALIZE DATA ---------------- */
+  const meta = normalizeMeta(doc?.meta)
+  const isNoisy = meta.dataset_type?.includes("NOISY")
+
+  /* -------- Normalize Data -------- */
 
   const chartData: ChartItem[] = useMemo(() => {
     if (!doc) return []
 
     return MODEL_ORDER.map((model) => {
       const v = doc.data[model] ?? {}
+
       return {
         model,
-        confidence_percent: v.confidence_percent ?? 0,
-        latency_ms: v.latency_ms ?? 0,
-        entropy: v.entropy ?? 0,
-        stability: v.stability ?? 0,
+
+        confidence_percent: isNoisy ? v.confidence_mean ?? 0 : v.confidence_percent ?? 0,
+        confidence_std: isNoisy ? v.confidence_std ?? 0 : 0,
+
+        latency_ms: isNoisy ? v.latency_mean ?? 0 : v.latency_ms ?? 0,
+        latency_std: isNoisy ? v.latency_std ?? 0 : 0,
+
+        entropy: isNoisy ? v.entropy_mean ?? 0 : v.entropy ?? 0,
+        entropy_std: isNoisy ? v.entropy_std ?? 0 : 0,
+
+        stability: isNoisy ? v.stability_mean ?? 0 : v.stability ?? 0,
+        stability_std: isNoisy ? v.stability_std ?? 0 : 0,
+
         ram_delta_mb: v.ram_mb ?? 0,
       }
     })
-  }, [doc])
+  }, [doc, isNoisy])
 
-  const meta = normalizeMeta(doc?.meta)
-
-  /* ---------------- RECOMMENDATION ---------------- */
+  /* -------- Best Model -------- */
 
   const recommendedModel = useMemo(() => {
     if (!chartData.length) return undefined
-
-    return [...chartData]
-      .sort(
-        (a, b) =>
-          scoreModel(b, meta.dataset_type) -
-          scoreModel(a, meta.dataset_type)
-      )[0].model
+    return [...chartData].sort(
+      (a, b) => scoreModel(b, meta.dataset_type) - scoreModel(a, meta.dataset_type)
+    )[0].model
   }, [chartData, meta.dataset_type])
 
-  const overall = useMemo(() => {
-    return getOverallSummary(chartData)
-  }, [chartData])
+  const selectedModelData = useMemo(() => {
+    if (selectedModel === "ALL") return null
+    return chartData.find((m) => m.model === selectedModel) ?? null
+  }, [selectedModel, chartData])
 
-  /* ---------------- UI STATES ---------------- */
+  const overall = useMemo(() => getOverallSummary(chartData), [chartData])
 
-  if (loading) {
-    return <p className="p-8 text-gray-500">Loading results…</p>
-  }
+  /* -------- UI States -------- */
 
-  if (!doc) {
-    return <p className="p-8 text-red-600">Failed to load result.</p>
-  }
+  if (loading) return <p className="p-8 text-gray-500">Loading results…</p>
+  if (!doc) return <p className="p-8 text-red-600">Failed to load result.</p>
 
-  /* ===================== UI ===================== */
+  /* ================= RENDER ================= */
 
   return (
     <div className="mx-auto max-w-7xl p-8 space-y-10">
 
-      {/* SUMMARY */}
-      <div className="rounded-xl border bg-gray-50 p-5">
+      {/* ===== Evaluation Summary ===== */}
+      <div className="rounded-xl border bg-gray-50 p-5 space-y-3">
         <h2 className="text-sm font-semibold text-gray-700">
           Evaluation Summary
         </h2>
 
-        <div className="mt-2 flex flex-wrap gap-3 text-sm">
-          <span className="rounded-full bg-blue-100 px-3 py-1 text-blue-700">
-            {meta.evaluation_type === "SINGLE"
-              ? "Single Image Inference"
-              : "Dataset Evaluation"}
-          </span>
-
-          <span className="rounded-full bg-purple-100 px-3 py-1 text-purple-700">
-            Source: {meta.source}
-          </span>
-
-          {meta.dataset_type && (
-            <span className="rounded-full bg-green-100 px-3 py-1 text-green-700">
-              Dataset: {meta.dataset_type}
-            </span>
-          )}
-
-          {meta.num_images && (
-            <span className="rounded-full bg-gray-200 px-3 py-1 text-gray-700">
-              Images: {meta.num_images}
-            </span>
-          )}
-        </div>
+        {recommendedModel && (
+          <div className="rounded-xl border bg-blue-50 p-5">
+            <h2 className="font-semibold text-blue-800">
+              🏆 System Recommendation
+            </h2>
+            <p className="mt-1 text-sm text-blue-700">
+              <strong>{recommendedModel}</strong> is the best model for{" "}
+              <strong>{meta.dataset_type ?? "this evaluation"}</strong>.
+            </p>
+          </div>
+        )}
       </div>
 
-      {/* RECOMMENDATION */}
-      <div className="rounded-xl border bg-blue-50 p-5">
-        <h2 className="font-semibold text-blue-800">
-          System Recommendation
-        </h2>
-        <p className="mt-1 text-sm text-blue-700">
-          <strong>{recommendedModel}</strong> is recommended for{" "}
-          <strong>{meta.dataset_type ?? "this evaluation"}</strong>{" "}
-          based on dataset-aware performance criteria
-          (accuracy, robustness, and efficiency).
-        </p>
-      </div>
-
-      {/* MODEL SELECTOR */}
+      {/* ===== 🔽 MODEL SELECTOR (THIS IS THE DROPDOWN) ===== */}
       <div className="flex items-center gap-3">
         <label className="text-sm font-medium text-gray-600">
-          View Mode:
+          View Model:
         </label>
         <select
           value={selectedModel}
@@ -205,53 +165,106 @@ export default function ResultPage() {
         >
           <option value="ALL">Compare all models</option>
           {MODEL_ORDER.map((m) => (
-            <option key={m} value={m}>{m}</option>
+            <option key={m} value={m}>
+              {m}
+            </option>
           ))}
         </select>
       </div>
 
-      {/* CHARTS */}
+      {/* ===== Charts ===== */}
       {selectedModel === "ALL" && (
         <ChartSection data={chartData} selectedModel="ALL" />
       )}
 
-      {selectedModel !== "ALL" && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-          {chartData
-            .filter((d) => d.model === selectedModel)
-            .map((d) => (
-              <div key={d.model} className="rounded-xl border bg-white p-6">
-                <h3 className="font-semibold mb-4">
-                  Model: {d.model}
-                </h3>
-                <MetricRow label="Confidence (%)" value={d.confidence_percent.toFixed(2)} />
-                <MetricRow label="Latency (ms)" value={d.latency_ms.toFixed(3)} />
-                <MetricRow label="Entropy" value={d.entropy.toFixed(4)} />
-                <MetricRow label="Stability" value={d.stability.toFixed(4)} />
-                <MetricRow label="RAM Usage (MB)" value={d.ram_delta_mb.toFixed(3)} />
-              </div>
-            ))}
+      {/* ===== Single Model Metrics ===== */}
+      {selectedModelData && (
+        <div
+          className={`rounded-xl border p-6 ${
+            selectedModelData.model === recommendedModel
+              ? "bg-green-50 border-green-400"
+              : "bg-white"
+          }`}
+        >
+          <h3 className="font-semibold mb-4">
+            Model: {selectedModelData.model}
+          </h3>
+
+          <MetricRow
+            label="Confidence (%)"
+            value={
+              isNoisy
+                ? `${selectedModelData.confidence_percent.toFixed(2)} ± ${(selectedModelData.confidence_std ?? 0).toFixed(2)}`
+                : selectedModelData.confidence_percent.toFixed(2)
+            }
+          />
+
+          <MetricRow
+            label="Latency (ms)"
+            value={
+              isNoisy
+                ? `${selectedModelData.latency_ms.toFixed(3)} ± ${(selectedModelData.latency_std ?? 0).toFixed(3)}`
+                : selectedModelData.latency_ms.toFixed(3)
+            }
+          />
+
+          <MetricRow
+            label="Entropy"
+            value={
+              isNoisy
+                ? `${selectedModelData.entropy.toFixed(4)} ± ${(selectedModelData.entropy_std ?? 0).toFixed(4)}`
+                : selectedModelData.entropy.toFixed(4)
+            }
+          />
+
+          <MetricRow
+            label="Stability"
+            value={
+              isNoisy
+                ? `${selectedModelData.stability.toFixed(4)} ± ${(selectedModelData.stability_std ?? 0).toFixed(4)}`
+                : selectedModelData.stability.toFixed(4)
+            }
+          />
         </div>
       )}
 
-      {/* OVERALL SUMMARY */}
+      {/* ===== Overall Performance Summary ===== */}
       {overall && (
         <div className="rounded-2xl border bg-gray-50 p-6 space-y-4">
           <h2 className="text-lg font-semibold text-gray-800">
             Overall Performance Summary
           </h2>
 
-          <SummaryRow label="Fastest Model" model={overall.fastest.model} value={`${overall.fastest.latency_ms.toFixed(3)} ms`} />
-          <SummaryRow label="Most Confident Model" model={overall.confident.model} value={`${overall.confident.confidence_percent.toFixed(2)} %`} />
-          <SummaryRow label="Most Stable Model" model={overall.stable.model} value={overall.stable.stability.toFixed(4)} />
-          <SummaryRow label="Lowest Uncertainty Model" model={overall.certain.model} value={overall.certain.entropy.toFixed(4)} />
+          <SummaryRow
+            label="Fastest Model"
+            model={overall.fastest.model}
+            value={`${overall.fastest.latency_ms.toFixed(3)} ms`}
+          />
+
+          <SummaryRow
+            label="Most Confident Model"
+            model={overall.confident.model}
+            value={`${overall.confident.confidence_percent.toFixed(2)} %`}
+          />
+
+          <SummaryRow
+            label="Most Stable Model"
+            model={overall.stable.model}
+            value={overall.stable.stability.toFixed(4)}
+          />
+
+          <SummaryRow
+            label="Lowest Uncertainty Model"
+            model={overall.certain.model}
+            value={overall.certain.entropy.toFixed(4)}
+          />
         </div>
       )}
     </div>
   )
 }
 
-/* ---------------- HELPERS ---------------- */
+/* ================= UI HELPERS ================= */
 
 function MetricRow({ label, value }: { label: string; value: string }) {
   return (
