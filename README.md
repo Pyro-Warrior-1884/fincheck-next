@@ -1,4 +1,4 @@
-# FinCheck  
+# FinCheck : A UNIFIED BENCHMARKING AND OCR TEXT ANALYSIS SYSTEM 
 FinCheck is a full-stack system for benchmarking optimized convolutional neural network (CNN) models on the MNIST dataset and for verifying handwritten numeric input using OCR. The system is designed for research, performance analysis, and real-world numeric verification workflows.
 
 The platform is:
