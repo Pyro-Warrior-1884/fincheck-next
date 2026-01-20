@@ -1,4 +1,31 @@
+"use client";
+
+import Link from "next/link";
+import { authClient } from "@/lib/auth-client";
+import { useRouter } from "next/navigation";
+
 export default function Dropdown() {
+  const { data: session, isPending } = authClient.useSession();
+  const router = useRouter();
+
+  const handleLogout = async () => {
+    await authClient.signOut({
+      fetchOptions: {
+        onSuccess: () => router.push("/"),
+      },
+    });
+  };
+
+  if (isPending) return null;
+
+  const isLoggedIn = !!session;
+
+  const avatarLetter = isLoggedIn
+    ? (session.user.name?.charAt(0) ?? "U").toUpperCase()
+    : "F";
+
+  const avatarImage = session?.user.image;
+
   return (
     <div className="dropdown dropdown-end">
       {/* Avatar trigger */}
@@ -7,23 +34,45 @@ export default function Dropdown() {
         role="button"
         className="btn btn-ghost btn-circle avatar"
       >
-        <div className="w-10 rounded-full">
-          <img
-            alt="User avatar"
-            src="https://img.daisyui.com/images/stock/photo-1534528741775-53994a69daeb.webp"
-          />
-        </div>
+        {avatarImage ? (
+          <div className="w-10 rounded-full">
+            <img src={avatarImage} alt="User avatar" />
+          </div>
+        ) : (
+          <div className="w-10 rounded-full bg-primary text-primary-content flex items-center justify-center font-semibold">
+            {avatarLetter}
+          </div>
+        )}
       </div>
+
+      {/* Dropdown menu */}
       <ul
         tabIndex={-1}
         className="menu menu-sm dropdown-content bg-base-100 rounded-box z-10 mt-3 w-52 p-2 shadow"
       >
-        <li>
-          <a>Sign-in</a>
-        </li>
-        <li>
-          <a>Sign-up</a>
-        </li>
+        {!isLoggedIn ? (
+          <>
+            <li>
+              <Link href="/login">Login</Link>
+            </li>
+            <li>
+              <Link href="/signup">Sign up</Link>
+            </li>
+          </>
+        ) : (
+          <>
+            <li className="menu-title">
+              <span className="text-xs truncate">
+                {session.user.email}
+              </span>
+            </li>
+            <li>
+              <button onClick={handleLogout} className="text-red-500">
+                Logout
+              </button>
+            </li>
+          </>
+        )}
       </ul>
     </div>
   );
