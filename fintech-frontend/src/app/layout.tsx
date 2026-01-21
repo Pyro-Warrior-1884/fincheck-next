@@ -17,20 +17,18 @@ export const metadata: Metadata = {
   title: "Fintech",
   description: "Fintech application",
 };
-
 export default function RootLayout({
   children,
-}: Readonly<{
+}: {
   children: React.ReactNode;
-}>) {
+}) {
   return (
-    <html lang="en" data-theme = "dark">
-      <body
-       className="min-h-screen bg-base-100 text-base-content"
-      >
+    <html lang="en" data-theme="dark" suppressHydrationWarning>
+      <body className="min-h-screen">
         <Header/>
         {children}
       </body>
     </html>
   );
 }
+

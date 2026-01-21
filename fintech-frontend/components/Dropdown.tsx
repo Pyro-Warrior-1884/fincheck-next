@@ -1,12 +1,19 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { authClient } from "@/lib/auth-client";
 import { useRouter } from "next/navigation";
 
 export default function Dropdown() {
+  const [mounted, setMounted] = useState(false);
   const { data: session, isPending } = authClient.useSession();
   const router = useRouter();
+
+  // ✅ Ensure client-only rendering
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const handleLogout = async () => {
     await authClient.signOut({
@@ -16,7 +23,8 @@ export default function Dropdown() {
     });
   };
 
-  if (isPending) return null;
+  // ⛔ Prevent hydration mismatch
+  if (!mounted || isPending) return null;
 
   const isLoggedIn = !!session;
 
@@ -67,7 +75,10 @@ export default function Dropdown() {
               </span>
             </li>
             <li>
-              <button onClick={handleLogout} className="text-red-500">
+              <button
+                onClick={handleLogout}
+                className="text-red-500"
+              >
                 Logout
               </button>
             </li>

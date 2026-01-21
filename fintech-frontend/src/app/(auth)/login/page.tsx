@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { authClient } from "@/lib/auth-client";
 import { useRouter } from "next/navigation";
+import { FaGithub } from "react-icons/fa";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -24,16 +25,28 @@ export default function LoginPage() {
         callbackURL: "/",
       },
       {
-        onSuccess: () => {
-          router.push("/");
-        },
-        onError: (ctx) => {
-          setError(ctx.error.message || "Invalid credentials");
-        },
+        onSuccess: () => router.push("/"),
+        onError: (ctx) =>
+          setError(ctx.error.message || "Invalid credentials"),
       }
     );
 
     setLoading(false);
+  };
+
+  const handleGithubLogin = async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      await authClient.signIn.social({
+        provider: "github",
+        callbackURL: "/",
+      });
+    } catch {
+      setError("GitHub login failed");
+      setLoading(false);
+    }
   };
 
   return (
@@ -45,6 +58,23 @@ export default function LoginPage() {
         <h1 className="text-xl font-bold">Login</h1>
 
         {error && <p className="text-red-500">{error}</p>}
+
+        {/* GitHub Login */}
+        <button
+          type="button"
+          onClick={handleGithubLogin}
+          disabled={loading}
+          className="flex w-full items-center justify-center gap-2 border p-2 hover:bg-gray-50 disabled:opacity-50"
+        >
+          <FaGithub size={20} />
+          Continue with GitHub
+        </button>
+
+        <div className="flex items-center gap-2">
+          <div className="h-px flex-1 bg-gray-300" />
+          <span className="text-sm text-gray-500">OR</span>
+          <div className="h-px flex-1 bg-gray-300" />
+        </div>
 
         <input
           type="email"
@@ -72,7 +102,7 @@ export default function LoginPage() {
           {loading ? "Signing in..." : "Login"}
         </button>
 
-        <p className="text-sm">
+        <p className="text-sm text-center">
           Don’t have an account?{" "}
           <span
             className="cursor-pointer underline"

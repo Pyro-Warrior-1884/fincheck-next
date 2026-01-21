@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { authClient } from "@/lib/auth-client";
 import { useRouter } from "next/navigation";
+import { FaGithub } from "react-icons/fa";
 
 export default function SignupPage() {
   const router = useRouter();
@@ -26,16 +27,28 @@ export default function SignupPage() {
         callbackURL: "/",
       },
       {
-        onSuccess: () => {
-          router.push("/");
-        },
-        onError: (ctx) => {
-          setError(ctx.error.message || "Signup failed");
-        },
+        onSuccess: () => router.push("/"),
+        onError: (ctx) =>
+          setError(ctx.error.message || "Signup failed"),
       }
     );
 
     setLoading(false);
+  };
+
+  const handleGithubSignup = async () => {
+    setLoading(true);
+    setError(null);
+
+    try {
+      await authClient.signIn.social({
+        provider: "github",
+        callbackURL: "/",
+      });
+    } catch {
+      setError("GitHub signup failed");
+      setLoading(false);
+    }
   };
 
   return (
@@ -47,6 +60,22 @@ export default function SignupPage() {
         <h1 className="text-xl font-bold">Create Account</h1>
 
         {error && <p className="text-red-500">{error}</p>}
+
+        <button
+          type="button"
+          onClick={handleGithubSignup}
+          disabled={loading}
+          className="flex w-full items-center justify-center gap-2 border p-2 hover:bg-gray-50 disabled:opacity-50"
+        >
+          <FaGithub size={20} />
+          Continue with GitHub
+        </button>
+
+        <div className="flex items-center gap-2">
+          <div className="h-px flex-1 bg-gray-300" />
+          <span className="text-sm text-gray-500">OR</span>
+          <div className="h-px flex-1 bg-gray-300" />
+        </div>
 
         <input
           type="text"
@@ -83,7 +112,7 @@ export default function SignupPage() {
           {loading ? "Creating..." : "Sign Up"}
         </button>
 
-        <p className="text-sm">
+        <p className="text-sm text-center">
           Already have an account?{" "}
           <span
             className="cursor-pointer underline"

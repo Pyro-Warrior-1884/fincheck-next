@@ -6,6 +6,12 @@ import { connectMongo } from "./mongodb";
 const db = await connectMongo();
 
 export const auth = betterAuth({
+  socialProviders: {
+    github:{
+      clientId:process.env.GITHUB_CLIENT_ID as string, 
+      clientSecret: process.env.GITHUB_CLIENT_SECRET as string,
+    }
+  },
   database: mongodbAdapter(db),
 
   emailAndPassword: {
@@ -13,6 +19,6 @@ export const auth = betterAuth({
   },
 
   plugins: [
-    nextCookies(), // MUST be last
+    nextCookies(), 
   ],
 });
