@@ -24,7 +24,7 @@ def download():
     for name in MODELS:
         dest = MODEL_DIR / name
         if dest.exists():
-            print(f"✅ {name} already exists")
+            print(f" {name} already exists")
             continue
 
         url = f"{BASE_URL}/{name}"
