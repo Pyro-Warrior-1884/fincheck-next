@@ -95,7 +95,7 @@ export default function DropdownFAB() {
         </div>
 
         {/* ===== FAB Actions ===== */}
-        <ul className="menu menu-sm gap-2 bg-base-100 rounded-box shadow-lg p-3 min-w-[210px]">
+        <ul className="menu menu-sm gap-2 bg-base-100 rounded-box shadow-lg p-3">
           {!isLoggedIn ? (
             <>
               <NavItem href="/login" label="Login" />
