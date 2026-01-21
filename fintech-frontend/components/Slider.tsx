@@ -45,12 +45,19 @@ export default function DropdownFAB() {
 
     if (isActive) {
       return (
-        <button
-          disabled
-          className="btn btn-sm btn-soft btn-secondary justify-start cursor-default"
-        >
-          {label}
-        </button>
+       <button
+  disabled
+  className="
+    btn btn-sm btn-soft btn-secondary
+    justify-start cursor-default
+    ring-1 ring-secondary/30
+    bg-secondary/10
+    text-secondary
+  "
+>
+  {label}
+</button>
+
       );
     }
 
