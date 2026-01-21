@@ -81,12 +81,27 @@ def set_seed(seed: int):
 TRANSFORM = transforms.Compose([
     transforms.ToTensor(),  # already 28x28
 ])
+#==================
+# ENHANCE KEYSTROKE
+#==================
+def enhance_strokes(gray):
+    kernel = np.ones((2, 2), np.uint8)
+
+    # close gaps in strokes
+    gray = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel)
+
+    # thicken strokes slightly
+    gray = cv2.dilate(gray, kernel, iterations=0)
+
+    return gray
 
 # =========================
 # CLEAN IMAGE (CHEQUE SAFE)
 # =========================
 def clean_image(img: Image.Image):
     img = np.array(img.convert("L"))
+
+    img = enhance_strokes(img)
 
     _, img = cv2.threshold(
         img, 0, 255,
@@ -95,11 +110,15 @@ def clean_image(img: Image.Image):
 
     return img
 
+
 # =========================
 # MNIST NORMALIZATION (CRITICAL)
 # =========================
 def normalize_mnist_digit(digit_img):
-    # digit_img is binary, white digit on black background
+    """
+    Convert segmented digit into MNIST-style 28x28 image
+    digit_img: binary image (white digit on black background)
+    """
 
     # 1️⃣ Crop tight bounding box
     coords = cv2.findNonZero(digit_img)
@@ -109,15 +128,32 @@ def normalize_mnist_digit(digit_img):
     x, y, w, h = cv2.boundingRect(coords)
     digit_img = digit_img[y:y+h, x:x+w]
 
-    # 2️⃣ Resize to 20x20
-    digit_img = cv2.resize(digit_img, (20, 20), interpolation=cv2.INTER_AREA)
+    # 2️⃣ Aspect-ratio safe resize (max side = 20)
+    h, w = digit_img.shape
+    scale = 20.0 / max(h, w)
 
-    # 3️⃣ Place in 28x28 canvas
+    new_w = max(1, int(w * scale))
+    new_h = max(1, int(h * scale))
+
+    digit_img = cv2.resize(
+        digit_img,
+        (new_w, new_h),
+        interpolation=cv2.INTER_AREA
+    )
+
+    # 3️⃣ Place in 28x28 canvas (centered)
     canvas = np.zeros((28, 28), dtype=np.uint8)
-    canvas[4:24, 4:24] = digit_img
+    y_offset = (28 - new_h) // 2
+    x_offset = (28 - new_w) // 2
 
-    # 4️⃣ Center-of-mass shift (CRITICAL)
+    canvas[y_offset:y_offset+new_h, x_offset:x_offset+new_w] = digit_img
+
+    # 4️⃣ Center-of-mass alignment (CRITICAL for MNIST)
     cy, cx = ndimage.center_of_mass(canvas)
+
+    if np.isnan(cx) or np.isnan(cy):
+        return None
+
     shift_x = int(round(14 - cx))
     shift_y = int(round(14 - cy))
 
@@ -129,6 +165,7 @@ def normalize_mnist_digit(digit_img):
     )
 
     return Image.fromarray(canvas.astype(np.uint8))
+
 
 # =========================
 # SEGMENT DIGITS (OPENCV)
