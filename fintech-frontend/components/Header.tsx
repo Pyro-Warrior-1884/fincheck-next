@@ -4,6 +4,7 @@ import Link from "next/link";
 import ThemeController from "./ThemeController";
 import Dropdown from "./Dropdown";
 import Slider from "./Slider";
+import ThemeToggle from "./ThemeController";
 
 export default function Header() {
   return (
@@ -20,7 +21,7 @@ export default function Header() {
             </Link>
 
             <div className="flex items-center gap-4">
-              <ThemeController />
+              <ThemeToggle/>
               {/* <Dropdown /> */}
             </div>
 
