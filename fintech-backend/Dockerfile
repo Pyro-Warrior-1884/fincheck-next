@@ -10,7 +10,7 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 
 # --------------------------------------------------
-# System dependencies (OCR + Torch runtime)
+# System dependencies (OCR + OpenCV + Torch runtime)
 # --------------------------------------------------
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -22,6 +22,7 @@ RUN apt-get update && \
         libxrender1 \
         libgl1 \
         ca-certificates \
+        curl \
     && rm -rf /var/lib/apt/lists/*
 
 # --------------------------------------------------
@@ -29,8 +30,9 @@ RUN apt-get update && \
 # --------------------------------------------------
 COPY requirements.txt .
 
-RUN pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir pytesseract
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir --prefer-binary -r requirements.txt && \
+    pip install --no-cache-dir pytesseract
 
 # --------------------------------------------------
 # Copy application code
@@ -40,18 +42,15 @@ COPY . .
 # --------------------------------------------------
 # Download models at build time
 # --------------------------------------------------
-RUN python - <<EOF
-from download_models import download
-download()
-EOF
+RUN python backend/download_models.py
 
 # --------------------------------------------------
 # Sanity check (fail fast)
 # --------------------------------------------------
 RUN python - <<EOF
 import pytesseract, os
-print("✅ pytesseract:", pytesseract.get_tesseract_version())
-models = os.listdir("model")
+print("✅ Tesseract:", pytesseract.get_tesseract_version())
+models = os.listdir("backend/model")
 assert models, "❌ No models found"
 print("✅ Models:", models)
 EOF
@@ -59,16 +58,17 @@ EOF
 # --------------------------------------------------
 # Create non-root user (Render-safe)
 # --------------------------------------------------
-RUN useradd --create-home --uid 10001 appuser \
-    && chown -R appuser:appuser /app
+RUN useradd --create-home --uid 10001 appuser && \
+    chown -R appuser:appuser /app
 
 USER appuser
+
 # --------------------------------------------------
 # Run server (Render REQUIRED format)
 # --------------------------------------------------
 CMD ["sh", "-c", \
-     "uvicorn server:app \
+     "uvicorn backend.server:app \
       --host 0.0.0.0 \
-      --port ${PORT} \
+      --port ${PORT:-8000} \
       --workers 2 \
       --timeout-keep-alive 30"]

@@ -1,66 +1,95 @@
-# Fincheck – Confidence-Aware Cheque Digit Validation System
+# **Fincheck – Confidence-Aware Cheque Digit Validation System**
 
-**Next.js (Frontend) + FastAPI + PyTorch (Backend)**
+**Next.js (Frontend) · FastAPI + PyTorch (Backend)**
 
 ---
 
-## Overview
+## 1. Overview
 
 **Fincheck** is a **full-stack fintech verification system** designed to detect **incorrect, ambiguous, or risky handwritten digits** in financial documents such as **bank cheques**.
 
-Unlike traditional OCR systems that always output a digit, **Fincheck focuses on risk detection** — identifying **when a digit should not be trusted**.
+Unlike conventional OCR systems that *always output a digit*, **Fincheck is explicitly risk-aware**.
+Its primary goal is **to identify when a digit should *not* be trusted**.
 
-### Core idea
-
+> **Core Principle**
 > *In financial systems, a wrong prediction is more dangerous than no prediction.*
 
 ---
 
-## Key Features
+## 2. Problem Statement
 
-### Image-only cheque digit verification
+Traditional OCR pipelines optimize for **maximum accuracy**, often producing confident outputs even when the input digit is ambiguous, noisy, or out-of-distribution.
+
+In financial workflows (cheques, account numbers, amounts):
+
+* Silent misclassification can lead to **monetary loss**
+* Ambiguous digits (e.g., 3 vs 5, 1 vs 7) are **high-risk**
+* Systems rarely expose *uncertainty*
+
+**Fincheck addresses this gap** by explicitly modeling **confidence and ambiguity**, rather than forcing a single prediction.
+
+---
+
+## 3. Key Features
+
+### 3.1 Image-Only Cheque Digit Verification
 
 * Accepts **single or multiple handwritten digits**
-* Works with **clean, noisy, scanned, or photographed images**
+* Robust to **noise, scans, camera images, skew, and blur**
 * Supports **PNG / JPG / JPEG** formats
+* No dependency on typed text input
 
-### Confidence-aware digit validation
+---
 
-Each digit is classified as:
+### 3.2 Confidence-Aware Digit Validation
 
-* **VALID** – high confidence
-* **AMBIGUOUS** – multiple plausible digits
-* **INVALID** – low confidence / unreliable
+Each detected digit is classified into one of three states:
 
-###  Position-level error reporting
+* **VALID** – High confidence, safe to accept
+* **AMBIGUOUS** – Multiple plausible digits
+* **INVALID** – Low confidence / unreliable / out-of-distribution
 
-* Identifies **exact digit position**
-* Shows **predicted value**
-* Displays **confidence percentage**
-* Lists **possible alternative digits**
+This prevents unsafe automation in financial decision pipelines.
 
-###  MNIST-based verification (no OCR guessing)
+---
+
+### 3.3 Position-Level Error Reporting
+
+For every digit position, the system reports:
+
+* Digit index / position
+* Predicted value
+* Confidence score (%)
+* Alternative plausible digits (if ambiguous)
+
+This allows **human-in-the-loop verification**.
+
+---
+
+### 3.4 MNIST-Based Shape Verification (No Blind OCR)
 
 * Uses **pretrained MNIST CNN models (.pth)**
-* Converts cheque digits → **MNIST-style 28×28 normalized format**
-* Rejects digits outside the learned digit manifold
+* Converts cheque digits into **MNIST-style normalized 28×28 images**
+* Rejects inputs that fall **outside the learned digit manifold**
+* Avoids forced predictions common in OCR engines
 
 ---
 
-##  Why MNIST is Used (Important)
+## 4. Why MNIST Is Used (Important Clarification)
 
-MNIST is **not used to recognize cheques**.
+MNIST is **not** used to “recognize cheques”.
 
-It is used as a **digit shape verifier** to determine:
+It is used as a **digit shape validity reference** to evaluate:
 
-* Whether a digit matches known handwritten digit distributions
-* Whether a digit is ambiguous or unsafe to trust
+* Whether a digit resembles known handwritten digit distributions
+* Whether the digit is ambiguous or unsafe
+* Whether the model should abstain from prediction
 
-This avoids silent failures common in OCR systems.
+This design explicitly **prioritizes risk minimization over raw accuracy**.
 
 ---
 
-##  System Architecture
+## 5. System Architecture
 
 ```text
 User (Browser)
@@ -69,22 +98,22 @@ Next.js Frontend (Bun)
    ↓ API Requests
 FastAPI Backend
    ↓
-Image Cleaning (OpenCV)
+Image Preprocessing (OpenCV)
    ↓
 Digit Segmentation (Connected Components)
    ↓
 MNIST Normalization (28×28 + Center of Mass)
    ↓
-KD-MNIST Inference (Confidence-Aware)
+Confidence-Aware MNIST Inference (PyTorch)
    ↓
-VALID / AMBIGUOUS / INVALID
+VALID / AMBIGUOUS / INVALID Decision
 ```
 
 ---
 
-##  Tech Stack
+## 6. Tech Stack
 
-### Frontend
+### 6.1 Frontend
 
 * Next.js (App Router)
 * TypeScript
@@ -93,7 +122,9 @@ VALID / AMBIGUOUS / INVALID
 * Canvas-based image rendering
 * Fetch API
 
-### Backend
+---
+
+### 6.2 Backend
 
 * FastAPI
 * PyTorch
@@ -101,31 +132,31 @@ VALID / AMBIGUOUS / INVALID
 * NumPy / SciPy
 * PIL
 * Torchvision
-* Tesseract (only for `/verify`, not image-only digit validation)
+* Tesseract
+  *(Used only for `/verify`, not for image-only digit validation)*
 
 ---
 
-
-##  Prerequisites
+## 7. Prerequisites
 
 ### Common
 
 * Git
-* Internet connection
+* Stable internet connection
 
 ### Frontend
 
-* **Bun (required)**
+* **Bun (mandatory)**
 
 ### Backend
 
 * **Python 3.10 – 3.12**
 * pip
-* (Optional) CUDA for GPU inference
+* Optional: CUDA for GPU inference
 
 ---
 
-##  Installing Bun (Frontend)
+## 8. Installing Bun (Frontend)
 
 ### macOS / Linux
 
@@ -149,7 +180,7 @@ bun --version
 
 ---
 
-##  Clone Repository
+## 9. Clone Repository
 
 ```bash
 git clone <YOUR_REPO_URL>
@@ -158,9 +189,9 @@ cd fincheck-next
 
 ---
 
-##  Backend Setup (FastAPI + PyTorch)
+## 10. Backend Setup (FastAPI + PyTorch)
 
-### Move to backend
+### Navigate to backend
 
 ```bash
 cd fintech-backend
@@ -182,11 +213,24 @@ source venv/bin/activate
 venv\Scripts\activate
 ```
 
+---
+
 ### Install dependencies
 
 ```bash
 pip install -r requirements.txt
+pip install scipy
 ```
+
+---
+
+### Download pretrained models
+
+```bash
+python download_models.py
+```
+
+---
 
 ### Start backend server
 
@@ -200,22 +244,25 @@ Backend runs at:
 http://127.0.0.1:8000
 ```
 
----
-
-##  Backend API Endpoints
-
-| Endpoint             | Method | Description                            |
-| -------------------- | ------ | -------------------------------------- |
-| `/verify-digit-only` | POST   | **Image-only cheque digit validation** |
-| `/verify`            | POST   | OCR + typed text verification          |
-| `/run`               | POST   | Single image MNIST inference           |
-| `/run-dataset`       | POST   | Dataset-level MNIST evaluation         |
+> **Note (Windows):**
+> The Microsoft C++ Build Tools must be installed for `pytesseract` to function correctly.
 
 ---
 
-##  Frontend Setup (Next.js + Bun)
+## 11. Backend API Endpoints
 
-### Move to frontend
+| Endpoint             | Method | Description                        |
+| -------------------- | ------ | ---------------------------------- |
+| `/verify-digit-only` | POST   | Image-only cheque digit validation |
+| `/verify`            | POST   | OCR + typed text verification      |
+| `/run`               | POST   | Single MNIST image inference       |
+| `/run-dataset`       | POST   | Dataset-level MNIST evaluation     |
+
+---
+
+## 12. Frontend Setup (Next.js + Bun)
+
+### Navigate to frontend
 
 ```bash
 cd ../fintech-frontend
@@ -229,7 +276,7 @@ bun install
 
 ---
 
-##  Environment Variables (Frontend)
+## 13. Environment Variables (Frontend)
 
 Create `.env` file:
 
@@ -264,7 +311,7 @@ Add to `.gitignore`:
 
 ---
 
-##  Run Frontend (Development)
+## 14. Run Frontend (Development)
 
 ```bash
 bun run dev
@@ -278,7 +325,7 @@ http://localhost:3000
 
 ---
 
-##  Example Output (Cheque Digit Validation)
+## 15. Example Output (Cheque Digit Validation)
 
 ```text
 Verdict: AMBIGUOUS
@@ -303,19 +350,50 @@ Possible values: 9, 3, 5
 
 ---
 
-## Evaluation Philosophy
+## 16. Output Screenshots
 
-This system does **not maximize accuracy**.
+This section documents **real system outputs** for transparency and evaluation.
 
-Instead, it minimizes **financial risk** by:
+### Included Screenshots
 
-* Rejecting low-confidence digits
-* Highlighting ambiguous digits
-* Avoiding silent misclassification
+* Uploaded cheque digit image
+* Segmented digit bounding boxes
+* MNIST-normalized 28×28 digit samples
+* Frontend validation result view
+* Confidence and ambiguity indicators
 
+> Screenshots should be placed under:
+
+```text
+/docs/screenshots/
+```
+
+Recommended filenames:
+
+```text
+input_cheque.png
+digit_segmentation.png
+mnist_normalization.png
+validation_result.png
+```
 
 ---
 
-## 📜 License
+## 17. Evaluation Philosophy
 
-This project is intended for **academic, research, and demonstration purposes**.
+Fincheck **does not aim to maximize accuracy**.
+
+Instead, it minimizes **financial risk** by:
+
+* Abstaining on low-confidence predictions
+* Flagging ambiguous digits
+* Exposing uncertainty explicitly
+* Supporting human verification
+
+This makes it suitable for **real-world financial workflows**, not just benchmarks.
+
+---
+
+## 18. License
+
+This project is intended for **academic, research, and demonstration purposes** only.
