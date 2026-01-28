@@ -13,6 +13,7 @@ import time
 import torchvision.transforms as transforms
 from torchvision.datasets import MNIST
 from torchvision.transforms import GaussianBlur
+from sklearn.metrics import confusion_matrix
 
 from model_def import MNISTCNN
 
@@ -249,11 +250,38 @@ def NOISY_BLUR(std=0.2):
         )),
     ])
 
-# ==================================================
-# INFERENCE (SINGLE RUN)
-# ==================================================
+def compute_far_frr(y_true, y_pred):
+    cm = confusion_matrix(y_true, y_pred, labels=list(range(10)))
+    total = cm.sum()
+
+    FARs = []
+    FRRs = []
+
+    for c in range(10):
+        TP = cm[c, c]
+        FP = cm[:, c].sum() - TP
+        FN = cm[c, :].sum() - TP
+        TN = total - TP - FP - FN
+
+        FAR_c = FP / (FP + TN + 1e-8)
+        FRR_c = FN / (FN + TP + 1e-8)
+
+        FARs.append(FAR_c)
+        FRRs.append(FRR_c)
+
+    FAR = float(np.mean(FARs))
+    FRR = float(np.mean(FRRs))
+
+    return cm.tolist(), round(FAR, 4), round(FRR, 4)
+
+def risk_score(FAR, FRR, alpha=0.5, beta=0.5):
+    return round(alpha * FAR + beta * FRR, 4)
+
+# ======================================================
+# INFERENCE CORE
+# ======================================================
 @torch.inference_mode()
-def run_batch(images):
+def run_batch(images, true_labels=None):
     batch = torch.stack(images).to(DEVICE)
     out = {}
 
@@ -261,26 +289,36 @@ def run_batch(images):
         start = time.perf_counter()
         logits = model(batch)
         probs = torch.softmax(logits, dim=1)
+        preds = probs.argmax(dim=1).cpu().numpy()
 
-        out[name] = {
+        entry = {
             "latency_ms": round((time.perf_counter() - start) * 1000 / len(batch), 3),
-            "confidence_percent": round(
-                probs.max(dim=1).values.mean().item() * 100, 2
-            ),
-            "entropy": round(
-                float(-(probs * torch.log(probs + 1e-8)).sum(dim=1).mean()), 4
-            ),
+            "confidence_percent": round(probs.max(dim=1).values.mean().item() * 100, 2),
+            "entropy": round(float(-(probs * torch.log(probs + 1e-8)).sum(dim=1).mean()), 4),
             "stability": round(float(logits.std()), 4),
             "ram_mb": 0.0,
         }
 
+        if true_labels is not None:
+            cm, FAR, FRR = compute_far_frr(true_labels, preds)
+            entry["evaluation"] = {
+                "confusion_matrix": cm,
+                "FAR": FAR,
+                "FRR": FRR,
+                "risk_score": risk_score(FAR, FRR)
+            }
+
+        out[name] = entry
+
     return out
+
 
 # ==================================================
 # INFERENCE (MULTI RUN – NOISY)
 # ==================================================
-def run_noisy_multi_eval(build_fn, runs=5):
+def run_noisy_multi_eval(build_fn, true_labels, runs=5):
     acc = {k: [] for k in MNIST_MODELS}
+    all_preds = {k: [] for k in MNIST_MODELS}
 
     for r in range(runs):
         set_seed(42 + r)
@@ -290,9 +328,16 @@ def run_noisy_multi_eval(build_fn, runs=5):
         for m, v in res.items():
             acc[m].append(v)
 
+        batch = torch.stack(images).to(DEVICE)
+        for name, model in MNIST_MODELS.items():
+            logits = model(batch)
+            preds = torch.softmax(logits, dim=1).argmax(dim=1)
+            all_preds[name].extend(preds.cpu().numpy())
+
     final = {}
+
     for m, vals in acc.items():
-        final[m] = {
+        entry = {
             "latency_mean": round(np.mean([x["latency_ms"] for x in vals]), 3),
             "latency_std": round(np.std([x["latency_ms"] for x in vals]), 3),
             "confidence_mean": round(np.mean([x["confidence_percent"] for x in vals]), 2),
@@ -303,15 +348,38 @@ def run_noisy_multi_eval(build_fn, runs=5):
             "stability_std": round(np.std([x["stability"] for x in vals]), 4),
         }
 
+        repeated_labels = true_labels * runs
+
+        cm, FAR, FRR = compute_far_frr(
+            repeated_labels,
+            all_preds[m]
+        )
+
+        entry["evaluation"] = {
+            "confusion_matrix": cm,
+            "FAR": FAR,
+            "FRR": FRR,
+            "risk_score": risk_score(FAR, FRR)
+        }
+
+        final[m] = entry
+
     return final
 
 # ==================================================
 # SINGLE IMAGE
 # ==================================================
 @app.post("/run")
-async def run(image: UploadFile = File(...)):
+async def run(
+    image: UploadFile = File(...),
+    expected_digit: int = Form(...)
+):
     img = Image.open(io.BytesIO(await image.read())).convert("L")
-    return run_batch([CLEAN(img)])
+
+    return run_batch(
+        [CLEAN(img)],
+        true_labels=[expected_digit]
+    )
 
 # ==================================================
 # DATASET
@@ -322,34 +390,45 @@ async def run_dataset(dataset_name: str = Form(...)):
 
     if dataset_name == "MNIST_100":
         images = [CLEAN(base[i][0]) for i in range(100)]
-        results = run_batch(images)
+        labels = [base[i][1] for i in range(100)]
+        results = run_batch(images, labels)
 
     elif dataset_name == "MNIST_500":
         images = [CLEAN(base[i][0]) for i in range(500)]
-        results = run_batch(images)
+        labels = [base[i][1] for i in range(500)]
+        results = run_batch(images, labels)
 
     elif dataset_name == "MNIST_FULL":
         images = [CLEAN(base[i][0]) for i in range(len(base))]
-        results = run_batch(images)
+        labels = [base[i][1] for i in range(len(base))]
+        results = run_batch(images, labels)
 
     elif dataset_name == "MNIST_NOISY_100":
+        labels = [base[i][1] for i in range(100)]
         results = run_noisy_multi_eval(
-            lambda: [NOISY()(base[i][0]) for i in range(100)]
+            lambda: [NOISY()(base[i][0]) for i in range(100)],
+            true_labels=labels
         )
 
     elif dataset_name == "MNIST_NOISY_500":
+        labels = [base[i][1] for i in range(500)]
         results = run_noisy_multi_eval(
-            lambda: [NOISY()(base[i][0]) for i in range(500)]
+            lambda: [NOISY()(base[i][0]) for i in range(500)],
+            true_labels=labels
         )
 
     elif dataset_name == "MNIST_NOISY_BLUR_100":
+        labels = [base[i][1] for i in range(100)]
         results = run_noisy_multi_eval(
-            lambda: [NOISY_BLUR()(base[i][0]) for i in range(100)]
+            lambda: [NOISY_BLUR()(base[i][0]) for i in range(100)],
+            true_labels=labels
         )
 
     elif dataset_name == "MNIST_NOISY_BLUR_500":
+        labels = [base[i][1] for i in range(500)]
         results = run_noisy_multi_eval(
-            lambda: [NOISY_BLUR()(base[i][0]) for i in range(500)]
+            lambda: [NOISY_BLUR()(base[i][0]) for i in range(500)],
+            true_labels=labels
         )
 
     else:
