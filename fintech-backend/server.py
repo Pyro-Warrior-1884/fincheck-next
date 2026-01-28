@@ -252,16 +252,27 @@ def NOISY_BLUR(std=0.2):
 
 def compute_far_frr(y_true, y_pred):
     cm = confusion_matrix(y_true, y_pred, labels=list(range(10)))
+    total = cm.sum()
 
-    TP = np.diag(cm).sum()
-    FP = cm.sum(axis=0).sum() - TP
-    FN = cm.sum(axis=1).sum() - TP
-    TN = cm.sum() - (TP + FP + FN)
+    FARs = []
+    FRRs = []
 
-    FAR = FP / (FP + TN + 1e-8)
-    FRR = FN / (FN + TP + 1e-8)
+    for c in range(10):
+        TP = cm[c, c]
+        FP = cm[:, c].sum() - TP
+        FN = cm[c, :].sum() - TP
+        TN = total - TP - FP - FN
 
-    return cm.tolist(), round(float(FAR), 4), round(float(FRR), 4)
+        FAR_c = FP / (FP + TN + 1e-8)
+        FRR_c = FN / (FN + TP + 1e-8)
+
+        FARs.append(FAR_c)
+        FRRs.append(FRR_c)
+
+    FAR = float(np.mean(FARs))
+    FRR = float(np.mean(FRRs))
+
+    return cm.tolist(), round(FAR, 4), round(FRR, 4)
 
 def risk_score(FAR, FRR, alpha=0.5, beta=0.5):
     return round(alpha * FAR + beta * FRR, 4)

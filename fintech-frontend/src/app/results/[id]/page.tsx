@@ -4,6 +4,9 @@ import { useEffect, useState, useMemo } from "react"
 import { useParams } from "next/navigation"
 import ChartSection from "../../../../components/charts/ChartSection"
 import type { ChartItem } from "../../../../components/metrics/types"
+import { ConfusionMatrix } from "../../../../components/confusion-matrix"
+import type { ConfusionMatrixModel } from "../../../../components/confusion-matrix"
+
 
 /* ================= CONSTANTS ================= */
 
@@ -107,6 +110,22 @@ export default function ResultPage() {
       }
     })
   }, [doc, isNoisy])
+
+  const confusionMatrices = useMemo<ConfusionMatrixModel[]>(() => {
+    if (!doc) return []
+
+    return MODEL_ORDER.map((model) => {
+      const evalData = doc.data?.[model]?.evaluation
+
+      return {
+        model,
+        matrix: evalData?.confusion_matrix ?? [],
+        FAR: evalData?.FAR,
+        FRR: evalData?.FRR,
+        risk_score: evalData?.risk_score
+      }
+    }).filter((m) => m.matrix.length > 0)
+  }, [doc])
 
   /* -------- Best Model -------- */
 
@@ -226,6 +245,25 @@ export default function ResultPage() {
             }
           />
         </div>
+      )}
+
+      {/* ===== Confusion Matrices ===== */}
+      {meta.evaluation_type === "DATASET" && selectedModel === "ALL" && (
+        <div className="space-y-8">
+          {confusionMatrices.map((m) => (
+            <ConfusionMatrix key={m.model} data={m} />
+          ))}
+        </div>
+      )}
+
+      {meta.evaluation_type === "DATASET" && selectedModelData && (
+        <ConfusionMatrix
+          data={
+            confusionMatrices.find(
+              (m) => m.model === selectedModelData.model
+            )!
+          }
+        />
       )}
 
       {/* ===== Overall Performance Summary ===== */}
