@@ -487,12 +487,12 @@ CONF_MARGIN = 5   # +/- window for ambiguous
 @app.post("/verify-digit-only")
 async def verify_digit_only(
     image: UploadFile = File(...),
-    confidence_threshold: float = Form(0.90)  # 0.90 = 90%
+    confidence_threshold: float = Form(0.90)  # 0.0 – 1.0
 ):
     try:
-        # ===== LOAD IMAGE =====
         raw = Image.open(image.file).convert("L")
 
+        # ===== PREPROCESS =====
         cleaned = clean_image(raw)
         digit_imgs = segment_digits(cleaned)
 
@@ -504,20 +504,22 @@ async def verify_digit_only(
                 "preview": None
             }
 
-        # ===== THRESHOLDS =====
         threshold_pct = confidence_threshold * 100
-        buffer_pct = threshold_pct - 5   # 5% ambiguity zone
+        buffer_pct = threshold_pct - 5  # ⭐ 5% ambiguity buffer
 
         analysis = []
         final_digits = []
-
-        preview_cropped = None
-        preview_normalized = None
-
         verdict = "VALID"
 
-        # ===== PROCESS DIGITS =====
+        preview_cropped = None
+        preview_norm = None
+
+        # ===== DIGIT LOOP =====
         for i, dimg in enumerate(digit_imgs):
+
+            # Save first cropped preview
+            if preview_cropped is None:
+                preview_cropped = encode_img(dimg)
 
             mnist_img = normalize_mnist_digit(dimg)
 
@@ -528,19 +530,23 @@ async def verify_digit_only(
                     "position": i + 1,
                     "predicted": None,
                     "confidence": 0,
-                    "status": "INVALID",
-                    "possible_values": []
+                    "status": "INVALID"
                 })
 
                 final_digits.append("?")
                 continue
 
+            # Save normalized preview
+            if preview_norm is None:
+                preview_norm = encode_img(np.array(mnist_img))
+
+            # ===== MODEL INFERENCE (.pth) =====
             preds = classify_digit(mnist_img)
             best = preds[0]
 
             conf = best["confidence"]
 
-            # ===== DECISION LOGIC (B MODE) =====
+            # ===== B MODE DECISION =====
             if conf >= threshold_pct:
                 status = "VALID"
 
@@ -563,12 +569,6 @@ async def verify_digit_only(
 
             final_digits.append(str(best["digit"]))
 
-            # ===== PREVIEW SAVE FIRST DIGIT =====
-            if preview_cropped is None:
-                preview_cropped = encode_img(dimg)
-                preview_normalized = encode_img(np.array(mnist_img))
-
-        # ===== FINAL RESPONSE =====
         return {
             "verdict": verdict,
             "digits": "".join(final_digits),
@@ -576,7 +576,7 @@ async def verify_digit_only(
             "preview": {
                 "original": encode_img(np.array(raw)),
                 "cropped": preview_cropped,
-                "normalized": preview_normalized
+                "normalized": preview_norm
             }
         }
 
