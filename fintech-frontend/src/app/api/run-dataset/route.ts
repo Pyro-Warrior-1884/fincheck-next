@@ -6,10 +6,12 @@ export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
   try {
+
+    // ---------- Read Incoming Form ----------
     const incomingForm = await req.formData();
 
     const datasetName = incomingForm.get("dataset_name");
-    const zipFile = incomingForm.get("zip_file"); 
+    const zipFile = incomingForm.get("zip_file");
 
     if (!datasetName && !(zipFile instanceof File)) {
       return NextResponse.json(
@@ -18,6 +20,7 @@ export async function POST(req: Request) {
       );
     }
 
+    // ---------- Backend URL ----------
     const API_URL = process.env.INFERENCE_API_URL;
     if (!API_URL) {
       return NextResponse.json(
@@ -26,24 +29,22 @@ export async function POST(req: Request) {
       );
     }
 
-    // ---------- Rebuild FormData ----------
+    // ==================================================
+    // ⭐ IMPORTANT FIX → Forward ALL Form Fields
+    // ==================================================
     const forwardForm = new FormData();
 
-    if (datasetName) {
-      forwardForm.append(
-        "dataset_name",
-        datasetName.toString()
-      );
-    }
+    incomingForm.forEach((value, key) => {
+      forwardForm.append(key, value as any);
+    });
 
-    if (zipFile instanceof File) {
-      forwardForm.append("zip_file", zipFile);
-    }
-
-    // ---------- Forward to FastAPI ----------
+    // ---------- Call FastAPI ----------
     const r = await fetch(
       `${API_URL}/run-dataset`,
-      { method: "POST", body: forwardForm }
+      {
+        method: "POST",
+        body: forwardForm,
+      }
     );
 
     const text = await r.text();
@@ -67,6 +68,7 @@ export async function POST(req: Request) {
 
     // ---------- Store in Mongo ----------
     const db = await connectMongo();
+
     const result = await db
       .collection("model_results")
       .insertOne({
@@ -76,6 +78,8 @@ export async function POST(req: Request) {
           source: zipFile ? "CUSTOM_ZIP" : "PREBUILT",
           dataset_type: data.dataset_type,
           num_images: data.num_images,
+          stress_applied: data.stress_applied,
+          stress_config: data.stress_config,
         },
         createdAt: new Date(),
       });
@@ -86,6 +90,7 @@ export async function POST(req: Request) {
 
   } catch (err) {
     console.error("run-dataset API error:", err);
+
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }
