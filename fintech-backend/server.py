@@ -79,6 +79,53 @@ MODEL_FILES = [
 # ==================================================
 # PDF HELPER → BUILD METRIC TABLE
 # ==================================================
+
+def build_perturbation_transform(
+    blur=0,
+    rotation=0,
+    noise_std=0,
+    erase_pct=0
+):
+    t = [
+        transforms.Grayscale(1),
+        transforms.Resize((28, 28)),
+    ]
+
+    if rotation > 0:
+        t.append(
+            transforms.RandomRotation(
+                degrees=(-rotation, rotation),
+                fill=0
+            )
+        )
+
+    if blur > 0:
+        t.append(GaussianBlur(5, blur))
+
+    t.append(transforms.ToTensor())
+
+    if noise_std > 0:
+        t.append(
+            transforms.Lambda(
+                lambda x: torch.clamp(
+                    x + noise_std * torch.randn_like(x),
+                    0, 1
+                )
+            )
+        )
+
+    if erase_pct > 0:
+        t.append(
+            transforms.RandomErasing(
+                p=1.0,
+                scale=(erase_pct, erase_pct),
+                value=0
+            )
+        )
+
+    return transforms.Compose(t)
+
+
 def build_pdf_metric_rows(result_models: dict):
 
     rows = [[
@@ -422,42 +469,97 @@ def run_noisy_multi_eval(build_fn, true_labels, runs=5):
     return final
 
 # ==================================================
-# SINGLE IMAGE
+# SINGLE IMAGE (WITH STRESS SUPPORT)
 # ==================================================
 @app.post("/run")
 async def run(
     image: UploadFile = File(...),
-    expected_digit: int = Form(...)
+    expected_digit: int = Form(...),
+
+    # ⭐ NEW — STRESS CONTROLS
+    blur: float = Form(0),
+    rotation: float = Form(0),
+    noise: float = Form(0),
+    erase: float = Form(0),
 ):
     img = Image.open(io.BytesIO(await image.read())).convert("L")
 
+    # ⭐ If any stress param applied → use perturb transform
+    if blur > 0 or rotation > 0 or noise > 0 or erase > 0:
+
+        transform = build_perturbation_transform(
+            blur=blur,
+            rotation=rotation,
+            noise_std=noise,
+            erase_pct=erase
+        )
+
+        tensor_img = transform(img)
+
+    else:
+        tensor_img = CLEAN(img)
+
     return run_batch(
-        [CLEAN(img)],
+        [tensor_img],
         true_labels=[expected_digit]
     )
-
 # ==================================================
-# DATASET
+# DATASET (WITH OPTIONAL STRESS SUPPORT)
 # ==================================================
 @app.post("/run-dataset")
-async def run_dataset(dataset_name: str = Form(...),zip_file: UploadFile = File(None)):
+async def run_dataset(
+    dataset_name: str = Form(None),
+    zip_file: UploadFile = File(None),
+
+    # ⭐ NEW OPTIONAL STRESS PARAMS
+    blur: float = Form(0),
+    rotation: float = Form(0),
+    noise: float = Form(0),
+    erase: float = Form(0),
+):
     base = MNIST(root=DATA_DIR, train=False, download=True)
+
     if not dataset_name and not zip_file:
-        raise HTTPException(400,"dataset_name or the zip_file name is required..")
-    elif dataset_name == "MNIST_100":
-        images = [CLEAN(base[i][0]) for i in range(100)]
+        raise HTTPException(
+            400,
+            "dataset_name or zip_file required"
+        )
+
+    # ⭐ STRESS TRANSFORM (if any param used)
+    use_stress = blur > 0 or rotation > 0 or noise > 0 or erase > 0
+
+    if use_stress:
+        transform = build_perturbation_transform(
+            blur=blur,
+            rotation=rotation,
+            noise_std=noise,
+            erase_pct=erase
+        )
+    else:
+        transform = CLEAN
+
+    # ==================================================
+    # PREBUILT DATASETS
+    # ==================================================
+
+    if dataset_name == "MNIST_100":
+        images = [transform(base[i][0]) for i in range(100)]
         labels = [base[i][1] for i in range(100)]
         results = run_batch(images, labels)
 
     elif dataset_name == "MNIST_500":
-        images = [CLEAN(base[i][0]) for i in range(500)]
+        images = [transform(base[i][0]) for i in range(500)]
         labels = [base[i][1] for i in range(500)]
         results = run_batch(images, labels)
 
     elif dataset_name == "MNIST_FULL":
-        images = [CLEAN(base[i][0]) for i in range(len(base))]
+        images = [transform(base[i][0]) for i in range(len(base))]
         labels = [base[i][1] for i in range(len(base))]
         results = run_batch(images, labels)
+
+    # ==================================================
+    # LEGACY NOISY DATASETS (KEEP THEM WORKING)
+    # ==================================================
 
     elif dataset_name == "MNIST_NOISY_100":
         labels = [base[i][1] for i in range(100)]
@@ -493,6 +595,13 @@ async def run_dataset(dataset_name: str = Form(...),zip_file: UploadFile = File(
     return {
         "dataset_type": dataset_name,
         "num_images": len(base),
+        "stress_applied": use_stress,
+        "stress_config": {
+            "blur": blur,
+            "rotation": rotation,
+            "noise": noise,
+            "erase": erase
+        } if use_stress else None,
         "models": results,
     }
 

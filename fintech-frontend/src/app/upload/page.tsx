@@ -1,201 +1,342 @@
 "use client"
 
-import { useState } from "react"
-import { useRouter } from "next/navigation"
-import EvaluationModeSelector from "../../../components/EvaluationModeSelector"
-import { PREBUILT_DATASETS } from "@/lib/dataset"
+  import { useState, useEffect, useRef } from "react"
+  import { useRouter } from "next/navigation"
+  import EvaluationModeSelector from "../../../components/EvaluationModeSelector"
+  import { PREBUILT_DATASETS } from "@/lib/dataset"
 
-type Mode = "SINGLE" | "DATASET"
-type DatasetSource = "PREBUILT" | "CUSTOM"
+  type Mode = "SINGLE" | "DATASET"
+  type DatasetSource = "PREBUILT" | "CUSTOM"
 
-export default function ConMatPage() {
-  const router = useRouter()
+  export default function ConMatPage() {
 
-  const [mode, setMode] = useState<Mode>("SINGLE")
-  const [datasetSource, setDatasetSource] =
-    useState<DatasetSource>("PREBUILT")
+    const router = useRouter()
 
-  const [selectedDataset, setSelectedDataset] =
-    useState<string>("MNIST_100")
+    /* ================= MODE ================= */
 
-  const [selectedDigit, setSelectedDigit] = useState<number>(0)
+    const [mode, setMode] = useState<Mode>("SINGLE")
+    const [datasetSource, setDatasetSource] =
+      useState<DatasetSource>("PREBUILT")
 
-  const [file, setFile] = useState<File | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+    /* ================= DATA ================= */
 
-  async function runInference() {
-    setLoading(true)
-    setError(null)
+    const [selectedDataset, setSelectedDataset] =
+      useState<string>("MNIST_100")
 
-    const form = new FormData()
-    let endpoint = ""
+    const [selectedDigit, setSelectedDigit] = useState<number>(0)
 
-    if (mode === "SINGLE") {
-      if (!file) {
-        setError("Please upload an image")
-        setLoading(false)
-        return
+    /* ================= FILE ================= */
+
+    const [file, setFile] = useState<File | null>(null)
+
+    /* ================= STRESS ================= */
+
+    const [blur, setBlur] = useState(0)
+    const [rotation, setRotation] = useState(0)
+    const [noise, setNoise] = useState(0)
+    const [erase, setErase] = useState(0)
+
+    /* ================= UI ================= */
+
+    const [loading, setLoading] = useState(false)
+    const [error, setError] = useState<string | null>(null)
+
+    /* ================= PREVIEW ================= */
+
+    const canvasRef = useRef<HTMLCanvasElement>(null)
+
+    /* ================================================= */
+    /* LIVE IMAGE EFFECT PREVIEW ENGINE */
+    /* ================================================= */
+
+    useEffect(() => {
+
+      if (!file || !canvasRef.current) return
+
+      const img = new Image()
+      img.src = URL.createObjectURL(file)
+
+      img.onload = () => {
+
+        const canvas = canvasRef.current!
+        const ctx = canvas.getContext("2d")!
+
+        canvas.width = img.width
+        canvas.height = img.height
+
+        ctx.clearRect(0,0,canvas.width,canvas.height)
+
+        ctx.save()
+
+        /* ROTATION */
+        if (rotation > 0) {
+          ctx.translate(canvas.width/2, canvas.height/2)
+          ctx.rotate((rotation * Math.PI)/180)
+          ctx.translate(-canvas.width/2, -canvas.height/2)
+        }
+
+        /* BLUR */
+        ctx.filter = `blur(${blur}px)`
+        ctx.drawImage(img,0,0)
+        ctx.restore()
+
+        /* NOISE */
+        if (noise > 0) {
+          const imgData = ctx.getImageData(0,0,canvas.width,canvas.height)
+          const data = imgData.data
+
+          for (let i=0;i<data.length;i+=4){
+            const n = (Math.random()-0.5)*255*noise
+            data[i]+=n
+            data[i+1]+=n
+            data[i+2]+=n
+          }
+
+          ctx.putImageData(imgData,0,0)
+        }
+
+        /* ERASE */
+        if (erase > 0){
+          ctx.fillStyle="black"
+          ctx.fillRect(
+            canvas.width*(1-erase),
+            canvas.height*(1-erase),
+            canvas.width*erase,
+            canvas.height*erase
+          )
+        }
+
       }
-      form.append("image", file)
-      form.append("expected_digit", selectedDigit.toString())
-      endpoint = "/api/run"
-    } else {
-      endpoint = "/api/run-dataset"
 
-      if (datasetSource === "CUSTOM") {
-        if (!file) {
-          setError("Please upload a ZIP file")
+    }, [file, blur, rotation, noise, erase])
+
+    /* ================================================= */
+    /* RUN INFERENCE */
+    /* ================================================= */
+
+    async function runInference() {
+
+      setLoading(true)
+      setError(null)
+
+      const form = new FormData()
+      let endpoint=""
+
+      if (mode==="SINGLE") {
+
+        if(!file){
+          setError("Upload image")
           setLoading(false)
           return
         }
-        form.append("zip_file", file)
+
+        form.append("image",file)
+        form.append("expected_digit",selectedDigit.toString())
+
+        endpoint="/api/run"
+
       } else {
-        form.append("dataset_name", selectedDataset)
+
+        endpoint="/api/run-dataset"
+
+        if(datasetSource==="CUSTOM"){
+
+          if(!file){
+            setError("Upload ZIP file")
+            setLoading(false)
+            return
+          }
+
+          form.append("zip_file",file)
+
+        } else {
+          form.append("dataset_name",selectedDataset)
+        }
+
       }
-    }
 
-    const res = await fetch(endpoint, {
-      method: "POST",
-      body: form,
-    })
+      /* Stress params for both */
+      form.append("blur",String(blur))
+      form.append("rotation",String(rotation))
+      form.append("noise",String(noise))
+      form.append("erase",String(erase))
 
-    if (!res.ok) {
-      setError("Inference failed. Please try again.")
+      try{
+        const res=await fetch(endpoint,{method:"POST",body:form})
+        const json=await res.json()
+
+        const id = json.id || json.result_id
+        if(!id) throw new Error()
+
+        router.push(`/results/${id}`)
+
+      }catch{
+        setError("Inference failed")
+      }
+
       setLoading(false)
-      return
     }
 
-    const json = await res.json()
+    /* ================================================= */
+    /* UI */
+    /* ================================================= */
 
-    const resultId = json.id || json.result_id
+    return (
+      <div className="mx-auto max-w-5xl p-8 space-y-8">
 
-    if (!resultId) {
-      setError("Invalid response from server")
-      setLoading(false)
-      return
-    }
+        <h1 className="text-3xl font-bold">
+          Run Inference
+        </h1>
 
-    router.push(`/results/${resultId}`)
-  }
+        <EvaluationModeSelector mode={mode} setMode={setMode} />
 
-  return (
-    <div className="mx-auto max-w-5xl p-8 space-y-8">
-      <h1 className="text-3xl font-bold">Run Inference</h1>
+        {/* ================================================= */}
+        {/* SINGLE MODE */}
+        {/* ================================================= */}
 
-      <EvaluationModeSelector mode={mode} setMode={setMode} />
+        {mode==="SINGLE" && (
+          <div className="space-y-6">
 
-      {/* ---------- SINGLE IMAGE MODE ---------- */}
-      {mode === "SINGLE" && (
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-gray-700">
-              Expected Digit
-            </label>
             <select
               value={selectedDigit}
-              onChange={(e) =>
-                setSelectedDigit(Number(e.target.value))
-              }
-              className="rounded-lg border border-gray-300 px-3 py-2 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              onChange={(e)=>setSelectedDigit(Number(e.target.value))}
+              className="border rounded-lg px-3 py-2 w-full"
             >
-              {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((digit) => (
-                <option key={digit} value={digit}>
-                  {digit}
-                </option>
+              {[0,1,2,3,4,5,6,7,8,9].map(d=>(
+                <option key={d}>{d}</option>
               ))}
             </select>
-          </div>
 
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-gray-700">
-              Upload Image
-            </label>
-            <p className="text-sm text-gray-600">
-              Upload a single handwritten digit image
-            </p>
-            <input
-              type="file"
-              accept="image/*"
-              onChange={(e) =>
-                setFile(e.target.files?.[0] || null)
-              }
-              className="block w-full text-sm text-gray-500 file:mr-4 file:rounded-lg file:border-0 file:bg-blue-50 file:px-4 file:py-2 file:text-sm file:font-medium file:text-blue-700 hover:file:bg-blue-100"
-            />
-          </div>
-        </div>
-      )}
-
-      {/* ---------- DATASET MODE ---------- */}
-      {mode === "DATASET" && (
-        <div className="space-y-4">
-          <p className="text-sm text-gray-600">
-            Evaluate models on a dataset for comparative analysis
-          </p>
-
-          <div className="flex gap-6">
-            <label className="flex items-center gap-2">
+            {/* Upload */}
+            <label className="flex flex-col items-center justify-center border-2 border-dashed rounded-xl p-8 cursor-pointer hover:bg-gray-50">
               <input
-                type="radio"
-                checked={datasetSource === "PREBUILT"}
-                onChange={() =>
-                  setDatasetSource("PREBUILT")
-                }
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e)=>setFile(e.target.files?.[0] || null)}
               />
-              Prebuilt dataset
+              Click / Drag Image
             </label>
 
-            <label className="flex items-center gap-2">
-              <input
-                type="radio"
-                checked={datasetSource === "CUSTOM"}
-                onChange={() =>
-                  setDatasetSource("CUSTOM")
-                }
-              />
-              Custom ZIP upload
-            </label>
+            {/* Live Preview */}
+            {file && (
+              <div>
+                <p className="text-sm font-medium mb-2">
+                  Live Stress Preview
+                </p>
+
+                <canvas
+                  ref={canvasRef}
+                  className="border rounded-lg max-h-64"
+                />
+              </div>
+            )}
+
           </div>
+        )}
 
-          {datasetSource === "PREBUILT" && (
-            <select
-              value={selectedDataset}
-              onChange={(e) =>
-                setSelectedDataset(e.target.value)
-              }
-              className="rounded-lg border px-3 py-2"
-            >
-              {PREBUILT_DATASETS.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.label}
-                </option>
-              ))}
-            </select>
-          )}
+        {/* ================================================= */}
+        {/* DATASET MODE */}
+        {/* ================================================= */}
 
-          {datasetSource === "CUSTOM" && (
-            <input
-              type="file"
-              accept=".zip"
-              onChange={(e) =>
-                setFile(e.target.files?.[0] || null)
-              }
-            />
-          )}
+        {mode==="DATASET" && (
+          <div className="space-y-6">
+
+            <div className="flex gap-6">
+
+              <label className="flex gap-2 items-center">
+                <input
+                  type="radio"
+                  checked={datasetSource==="PREBUILT"}
+                  onChange={()=>setDatasetSource("PREBUILT")}
+                />
+                Prebuilt Dataset
+              </label>
+
+              <label className="flex gap-2 items-center">
+                <input
+                  type="radio"
+                  checked={datasetSource==="CUSTOM"}
+                  onChange={()=>setDatasetSource("CUSTOM")}
+                />
+                Custom ZIP
+              </label>
+
+            </div>
+
+            {datasetSource==="PREBUILT" && (
+              <select
+                value={selectedDataset}
+                onChange={(e)=>setSelectedDataset(e.target.value)}
+                className="border rounded-lg px-3 py-2 w-full"
+              >
+                {PREBUILT_DATASETS.map(d=>(
+                  <option key={d.id} value={d.id}>
+                    {d.label}
+                  </option>
+                ))}
+              </select>
+            )}
+
+            {datasetSource==="CUSTOM" && (
+              <input
+                type="file"
+                accept=".zip"
+                onChange={(e)=>setFile(e.target.files?.[0] || null)}
+                className="border rounded-lg px-3 py-2 w-full"
+              />
+            )}
+
+          </div>
+        )}
+
+        {/* ================================================= */}
+        {/* STRESS CONTROLS */}
+        {/* ================================================= */}
+
+        <div className="border rounded-xl p-5 bg-gray-50 space-y-4">
+
+          <h2 className="font-semibold">
+            Stress / Perturbation Controls
+          </h2>
+
+          <Slider label="Blur" value={blur} setValue={setBlur} min={0} max={5} step={0.1}/>
+          <Slider label="Rotation" value={rotation} setValue={setRotation} min={0} max={30}/>
+          <Slider label="Noise" value={noise} setValue={setNoise} min={0} max={0.5} step={0.01}/>
+          <Slider label="Erase" value={erase} setValue={setErase} min={0} max={0.4} step={0.05}/>
+
         </div>
-      )}
 
-      {error && (
-        <p className="text-sm text-red-600">{error}</p>
-      )}
+        {error && <p className="text-red-600">{error}</p>}
 
-      <button
-        onClick={runInference}
-        disabled={loading}
-        className="rounded-lg bg-blue-600 px-5 py-2 text-white disabled:opacity-50"
-      >
-        {loading ? "Running…" : "Run Evaluation"}
-      </button>
-    </div>
-  )
-}
+        <button
+          onClick={runInference}
+          disabled={loading}
+          className="bg-blue-600 text-white px-6 py-2 rounded-lg"
+        >
+          {loading ? "Running..." : "Run Evaluation"}
+        </button>
+
+      </div>
+    )
+  }
+
+  /* ================= SLIDER ================= */
+
+  function Slider({label,value,setValue,min,max,step=1}:any){
+    return(
+      <div>
+        <p className="text-sm font-medium">{label}</p>
+        <input
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          onChange={(e)=>setValue(Number(e.target.value))}
+          className="w-full"
+        />
+        <p className="text-xs text-gray-500">{value}</p>
+      </div>
+    )
+  }
