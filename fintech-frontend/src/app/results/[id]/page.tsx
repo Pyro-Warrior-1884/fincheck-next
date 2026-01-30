@@ -58,11 +58,14 @@ export default function ResultPage() {
 
   const [doc, setDoc] = useState<ResultDoc | null>(null)
   const [loading, setLoading] = useState(true)
+  const [exporting, setExporting] = useState(false)
 
   const [selectedModel, setSelectedModel] = useState("ALL")
   const [sortBy, setSortBy] = useState<
     "latency" | "confidence" | "risk" | "balanced"
   >("balanced")
+
+  /* ================= FETCH RESULT ================= */
 
   useEffect(() => {
     fetch(`/api/results/${id}`)
@@ -71,10 +74,38 @@ export default function ResultPage() {
       .finally(() => setLoading(false))
   }, [id])
 
+  /* ================= EXPORT PDF ================= */
+
+async function downloadPdf() {
+  try {
+    setExporting(true)
+
+    const res = await fetch(`/api/export/pdf/${id}`)
+
+    if (!res.ok) throw new Error("PDF failed")
+
+    const blob = await res.blob()
+    const url = window.URL.createObjectURL(blob)
+
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `mnist_report_${id}.pdf`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+
+  } catch {
+    alert("PDF Export Failed")
+  } finally {
+    setExporting(false)
+  }
+}
+
+
+  /* ================= DATA ================= */
+
   const meta = normalizeMeta(doc?.meta)
   const isNoisy = meta.dataset_type?.includes("NOISY")
-
-  /* ================= NORMALIZE CHART DATA ================= */
 
   const chartData = useMemo(() => {
     if (!doc) return []
@@ -98,8 +129,6 @@ export default function ResultPage() {
     })
   }, [doc, isNoisy])
 
-  /* ================= CONFUSION MATRICES ================= */
-
   const confusionMatrices = useMemo<ConfusionMatrixModel[]>(() => {
     if (!doc) return []
 
@@ -114,8 +143,6 @@ export default function ResultPage() {
       }
     }).filter((m) => m.matrix.length > 0)
   }, [doc])
-
-  /* ================= SORTING ================= */
 
   const sortedChartData = useMemo(() => {
     const arr = [...chartData]
@@ -135,8 +162,6 @@ export default function ResultPage() {
         scoreModel(a, meta.dataset_type)
     )
   }, [chartData, sortBy, meta.dataset_type])
-
-  /* ================= SPECIAL PICKS ================= */
 
   const safestModel = [...chartData].sort((a, b) => a.risk_score - b.risk_score)[0]
 
@@ -172,6 +197,19 @@ export default function ResultPage() {
 
   return (
     <div className="mx-auto max-w-7xl p-8 space-y-10">
+
+      {/* ===== HEADER + EXPORT BUTTON ===== */}
+      <div className="flex justify-between items-center">
+        <h1 className="text-2xl font-semibold">Evaluation Results</h1>
+
+        <button
+          onClick={downloadPdf}
+          disabled={exporting}
+          className="bg-blue-600 text-white px-4 py-2 rounded-lg disabled:opacity-50"
+        >
+          {exporting ? "Exporting PDF..." : "Export PDF"}
+        </button>
+      </div>
 
       {/* ===== SORT + MODEL SELECT ===== */}
       <div className="flex flex-wrap gap-6">

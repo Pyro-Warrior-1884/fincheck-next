@@ -15,7 +15,22 @@ from torchvision.datasets import MNIST
 from torchvision.transforms import GaussianBlur
 from sklearn.metrics import confusion_matrix
 
+from fastapi.responses import StreamingResponse
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table
+from reportlab.lib.styles import getSampleStyleSheet
+from datetime import datetime
+import os
+from dotenv import load_dotenv
+from pymongo import MongoClient
 from model_def import MNISTCNN
+
+load_dotenv()
+
+MONGODB_URI = os.getenv("MONGODB_URI")
+
+if not MONGODB_URI:
+    raise RuntimeError("MONGODB_URI missing from .env")
+
 
 # =========================
 # TORCH CONFIG
@@ -29,6 +44,16 @@ torch.backends.cudnn.deterministic = True
 # APP
 # =========================
 app = FastAPI()
+# =========================
+# MONGO CONNECTION
+# =========================
+mongo_client = MongoClient(MONGODB_URI)
+
+# Atlas URL DB NAME → fintech-auth
+mongo_db = mongo_client["fintech-auth"]
+
+mongo_results = mongo_db["model_results"]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -49,6 +74,36 @@ MODEL_FILES = [
     "quantized_mnist.pth",
     "ws_mnist.pth",
 ]
+
+
+# ==================================================
+# PDF HELPER → BUILD METRIC TABLE
+# ==================================================
+def build_pdf_metric_rows(result_models: dict):
+
+    rows = [[
+        "Model",
+        "Confidence %",
+        "Latency ms",
+        "Entropy",
+        "Stability",
+        "Risk Score"
+    ]]
+
+    for model_name, data in result_models.items():
+
+        eval_data = data.get("evaluation", {})
+
+        rows.append([
+            model_name,
+            data.get("confidence_percent") or data.get("confidence_mean"),
+            data.get("latency_ms") or data.get("latency_mean"),
+            data.get("entropy") or data.get("entropy_mean"),
+            data.get("stability") or data.get("stability_mean"),
+            eval_data.get("risk_score")
+        ])
+
+    return rows
 
 # =========================
 # LOAD KD MNIST MODEL
@@ -385,10 +440,11 @@ async def run(
 # DATASET
 # ==================================================
 @app.post("/run-dataset")
-async def run_dataset(dataset_name: str = Form(...)):
+async def run_dataset(dataset_name: str = Form(...),zip_file: UploadFile = File(None)):
     base = MNIST(root=DATA_DIR, train=False, download=True)
-
-    if dataset_name == "MNIST_100":
+    if not dataset_name and not zip_file:
+        raise HTTPException(400,"dataset_name or the zip_file name is required..")
+    elif dataset_name == "MNIST_100":
         images = [CLEAN(base[i][0]) for i in range(100)]
         labels = [base[i][1] for i in range(100)]
         results = run_batch(images, labels)
@@ -585,3 +641,180 @@ async def verify_digit_only(
             "verdict": "ERROR",
             "message": str(e)
         }
+# ==================================================
+# PDF EXPORT
+# ==================================================
+@app.post("/export-pdf")
+async def export_pdf(
+    dataset_name: str = Form(None),
+    image: UploadFile = File(None),
+    expected_digit: int = Form(None),
+):
+    try:
+
+        # ---------- RUN INFERENCE ----------
+        if dataset_name:
+            dataset_result = await run_dataset(dataset_name)
+            models = dataset_result["models"]
+            meta = {
+                "type": "DATASET",
+                "dataset": dataset_name,
+                "num_images": dataset_result["num_images"]
+            }
+
+        elif image:
+            img = Image.open(io.BytesIO(await image.read())).convert("L")
+            models = run_batch(
+                [CLEAN(img)],
+                true_labels=[expected_digit] if expected_digit is not None else None
+            )
+
+            meta = {
+                "type": "SINGLE_IMAGE",
+                "expected_digit": expected_digit
+            }
+
+        else:
+            raise HTTPException(400, "Provide dataset_name OR image")
+        
+                # ---------- SAVE RESULT ----------
+        mongo_results.insert_one({
+            "data": models,
+            "meta": meta,
+            "export_type": "PDF_ONLY",
+            "createdAt": datetime.utcnow()
+        })
+
+
+        # ---------- BUILD PDF ----------
+        buffer = io.BytesIO()
+        styles = getSampleStyleSheet()
+        story = []
+
+        # ---------- TITLE ----------
+        story.append(Paragraph("MNIST Evaluation Report", styles["Title"]))
+        story.append(Spacer(1, 12))
+
+        story.append(Paragraph(
+            f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
+            styles["Normal"]
+        ))
+        story.append(Spacer(1, 10))
+
+        # ---------- META ----------
+        story.append(Paragraph("Experiment Settings", styles["Heading2"]))
+
+        for k, v in meta.items():
+            story.append(Paragraph(f"{k}: {v}", styles["Normal"]))
+
+        story.append(Spacer(1, 16))
+
+        # ---------- METRIC TABLE ----------
+        story.append(Paragraph("Model Metrics", styles["Heading2"]))
+
+        table_data = build_pdf_metric_rows(models)
+        story.append(Table(table_data))
+        story.append(Spacer(1, 20))
+
+        # ---------- CONFUSION MATRICES ----------
+        story.append(Paragraph("Confusion Matrices", styles["Heading2"]))
+
+        for model_name, data in models.items():
+            eval_data = data.get("evaluation")
+
+            if not eval_data:
+                continue
+
+            story.append(Paragraph(model_name, styles["Heading3"]))
+            story.append(Table(eval_data["confusion_matrix"]))
+            story.append(Spacer(1, 12))
+
+        # ---------- BUILD ----------
+        pdf = SimpleDocTemplate(buffer)
+        pdf.build(story)
+
+        buffer.seek(0)
+
+        return StreamingResponse(
+            buffer,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": "attachment; filename=mnist_report.pdf"
+            }
+        )
+
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+from bson import ObjectId
+
+@app.get("/export/pdf/{id}")
+def export_pdf_from_db(id: str):
+    try:
+
+        doc = mongo_results.find_one({"_id": ObjectId(id)})
+
+        if not doc:
+            raise HTTPException(404, "Result not found")
+
+        models = doc["data"]
+        meta = doc.get("meta", {})
+
+        buffer = io.BytesIO()
+        styles = getSampleStyleSheet()
+        story = []
+
+        # ---------- TITLE ----------
+        story.append(Paragraph("MNIST Evaluation Report", styles["Title"]))
+        story.append(Spacer(1, 12))
+
+        story.append(Paragraph(
+            f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
+            styles["Normal"]
+        ))
+        story.append(Spacer(1, 10))
+
+        # ---------- META ----------
+        story.append(Paragraph("Experiment Settings", styles["Heading2"]))
+
+        for k, v in meta.items():
+            story.append(Paragraph(f"{k}: {v}", styles["Normal"]))
+
+        story.append(Spacer(1, 16))
+
+        # ---------- METRICS ----------
+        story.append(Paragraph("Model Metrics", styles["Heading2"]))
+
+        table_data = build_pdf_metric_rows(models)
+        story.append(Table(table_data))
+        story.append(Spacer(1, 20))
+
+        # ---------- CONFUSION MATRICES ----------
+        story.append(Paragraph("Confusion Matrices", styles["Heading2"]))
+
+        for model_name, data in models.items():
+            eval_data = data.get("evaluation")
+
+            if not eval_data:
+                continue
+
+            story.append(Paragraph(model_name, styles["Heading3"]))
+            story.append(Table(eval_data["confusion_matrix"]))
+            story.append(Spacer(1, 12))
+
+        # ---------- BUILD ----------
+        pdf = SimpleDocTemplate(buffer)
+        pdf.build(story)
+
+        buffer.seek(0)
+
+        return StreamingResponse(
+            buffer,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"attachment; filename=result_{id}.pdf"
+            }
+        )
+
+    except Exception as e:
+        raise HTTPException(500, str(e))
