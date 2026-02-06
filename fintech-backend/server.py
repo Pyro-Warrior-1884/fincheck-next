@@ -10,7 +10,6 @@ from scipy import ndimage
 import io
 import random
 import time
-import torchvision.transforms as transforms
 from torchvision.datasets import MNIST
 from torchvision.transforms import GaussianBlur
 from sklearn.metrics import confusion_matrix
@@ -23,6 +22,8 @@ import os
 from dotenv import load_dotenv
 from pymongo import MongoClient
 from model_def import MNISTCNN
+from download_modes import ensure_models
+
 
 load_dotenv()
 
@@ -36,7 +37,6 @@ if not MONGODB_URI:
 # TORCH CONFIG
 # =========================
 torch.set_grad_enabled(False)
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.backends.cudnn.benchmark = False
 torch.backends.cudnn.deterministic = True
 
@@ -160,16 +160,34 @@ MODEL = None
 MNIST_MODELS = {}
 
 @app.on_event("startup")
+def startup_event():
+    """
+    Runs once when the app starts.
+    Ensures models exist and loads them into memory.
+    """
+    ensure_models()
+    load_models()
+
+
 def load_models():
+    MNIST_MODELS.clear()
+
     for f in MODEL_FILES:
+        model_path = MODEL_DIR / f
+
+        if not model_path.exists():
+            raise RuntimeError(f"❌ Model file missing: {f}")
+
         model = MNISTCNN().to(DEVICE)
         model.load_state_dict(
-            torch.load(MODEL_DIR / f, map_location=DEVICE),
+            torch.load(model_path, map_location=DEVICE),
             strict=False,
         )
         model.eval()
+
         MNIST_MODELS[f] = model
-    print("✅ MNIST models loaded")
+
+    print("✅ MNIST models loaded into memory")
 
 
 def set_seed(seed: int):
@@ -785,14 +803,15 @@ async def export_pdf(
 
         else:
             raise HTTPException(400, "Provide dataset_name OR image")
-        
-                # ---------- SAVE RESULT ----------
+
+# ---------- SAVE RESULT ----------
         mongo_results.insert_one({
-            "data": models,
-            "meta": meta,
-            "export_type": "PDF_ONLY",
-            "createdAt": datetime.utcnow()
-        })
+                "data": models,
+                "meta": meta,
+                "export_type": "PDF_ONLY",
+                "createdAt": datetime.utcnow()
+            })
+
 
 
         # ---------- BUILD PDF ----------

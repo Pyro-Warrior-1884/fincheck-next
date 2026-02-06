@@ -1,11 +1,9 @@
-# backend/download_models.py
 import requests
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 MODEL_DIR = BASE_DIR / "model"
 
-print("📁 Model dir:", MODEL_DIR)
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
 RELEASE_TAG = "v1-models"
@@ -20,24 +18,29 @@ MODELS = [
     "ws_mnist.pth",
 ]
 
-def download():
+def ensure_models():
+    missing = []
+
     for name in MODELS:
-        dest = MODEL_DIR / name
-        if dest.exists():
-            print(f" {name} already exists")
-            continue
+        if not (MODEL_DIR / name).exists():
+            missing.append(name)
 
+    if not missing:
+        print("✅ All model files already present")
+        return
+
+    print(f"⬇️ Downloading {len(missing)} missing model(s)")
+
+    for name in missing:
         url = f"{BASE_URL}/{name}"
-        print(f"⬇️ Downloading {url}")
+        dest = MODEL_DIR / name
 
-        r = requests.get(url, stream=True)
+        print(f"⬇️ {name}")
+        r = requests.get(url, stream=True, timeout=30)
         r.raise_for_status()
 
         with open(dest, "wb") as f:
             for chunk in r.iter_content(8192):
                 f.write(chunk)
 
-    print("🎉 All models downloaded successfully")
-
-if __name__ == "__main__":
-    download()
+    print("🎉 Model download complete")

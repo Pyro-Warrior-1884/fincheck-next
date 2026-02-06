@@ -1,74 +1,64 @@
+# ==================================================
+# Base image (CPU, slim, production-safe)
+# ==================================================
 FROM python:3.12-slim
 
-# --------------------------------------------------
+# ==================================================
 # Environment
-# --------------------------------------------------
+# ==================================================
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    TESSDATA_PREFIX=/usr/share/tesseract-ocr/4.00/tessdata
+    TESSDATA_PREFIX=/usr/share/tesseract-ocr/4.00/tessdata \
+    TORCH_HOME=/app/.torch
 
-WORKDIR /app
-
-# --------------------------------------------------
-# System dependencies (OCR + OpenCV + Torch runtime)
-# --------------------------------------------------
+# ==================================================
+# System dependencies (OpenCV + OCR + Torch runtime)
+# ==================================================
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        build-essential \
         tesseract-ocr \
         tesseract-ocr-eng \
         libglib2.0-0 \
+        libgl1 \
         libsm6 \
         libxext6 \
         libxrender1 \
-        libgl1 \
         ca-certificates \
         curl \
+        git \
     && rm -rf /var/lib/apt/lists/*
 
-# --------------------------------------------------
+# ==================================================
+# Work directory
+# ==================================================
+WORKDIR /app
+
+# ==================================================
 # Python dependencies (cached layer)
-# --------------------------------------------------
+# ==================================================
 COPY requirements.txt .
 
-RUN pip install --upgrade pip && \
-    pip install --no-cache-dir --prefer-binary -r requirements.txt && \
-    pip install --no-cache-dir pytesseract
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
-# --------------------------------------------------
-# Copy application code
-# --------------------------------------------------
+# ==================================================
+# Copy project files
+# ==================================================
 COPY . .
 
-# --------------------------------------------------
-# Download models at build time
-# --------------------------------------------------
-RUN python backend/download_models.py
+# ==================================================
+# Download model weights (build-time, ONCE)
+# Safe because ensure_models() is idempotent
+# ==================================================
+RUN python download_modes.py
 
-# --------------------------------------------------
-# Sanity check (fail fast)
-# --------------------------------------------------
-RUN python - <<EOF
-import pytesseract, os
-print("✅ Tesseract:", pytesseract.get_tesseract_version())
-models = os.listdir("backend/model")
-assert models, "❌ No models found"
-print("✅ Models:", models)
-EOF
+# ==================================================
+# Expose FastAPI port
+# ==================================================
+EXPOSE 8000
 
-# --------------------------------------------------
-# Create non-root user (Render-safe)
-# --------------------------------------------------
-RUN useradd --create-home --uid 10001 appuser && \
-    chown -R appuser:appuser /app
-
-USER appuser
-
-# --------------------------------------------------
-# Run server (Render REQUIRED format)
-# --------------------------------------------------
-CMD ["sh", "-c", \
-     "uvicorn backend.server:app \
-      --host 0.0.0.0 \
-      --port ${PORT:-8000} \
-      --workers 2 \
-      --timeout-keep-alive 30"]
+# ==================================================
+# Start FastAPI server
+# ==================================================
+CMD ["uvicorn", "server:app", "--host", "0.0.0.0", "--port", "8000"]
