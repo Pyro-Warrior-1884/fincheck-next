@@ -23,6 +23,13 @@ from dotenv import load_dotenv
 from pymongo import MongoClient
 from model_def import MNISTCNN
 from download_modes import ensure_models
+import re
+import cv2
+import pytesseract
+import numpy as np
+from fastapi import FastAPI, UploadFile, File
+from PIL import Image
+import io
 
 
 load_dotenv()
@@ -946,3 +953,206 @@ def export_pdf_from_db(id: str):
 
     except Exception as e:
         raise HTTPException(500, str(e))
+
+def preprocess(image: np.ndarray) -> np.ndarray:
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    thresh = cv2.adaptiveThreshold(
+        blur, 255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        11, 2
+    )
+    return thresh
+
+
+def crop_amount_digits_roi(image: np.ndarray) -> np.ndarray:
+    h, w, _ = image.shape
+    return image[int(h * 0.40):int(h * 0.55), int(w * 0.58):int(w * 0.95)]
+
+
+def preprocess_digits(image: np.ndarray) -> np.ndarray:
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    gray = cv2.equalizeHist(gray)
+    _, thresh = cv2.threshold(
+        gray, 0, 255,
+        cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    )
+    return thresh
+def extract_amount(text: str):
+    text = text.upper()
+
+    # ---------- WORDS ----------
+    word_match = re.search(r"([A-Z\s]+RUPEES\s+ONLY)", text)
+    amount_words = word_match.group(1).strip() if word_match else None
+
+    # ---------- DIGITS ----------
+    digit_patterns = [
+        r"₹\s*([\d,]+)",
+        r"RS\.?\s*([\d,]+)",
+        r"([\d,]+)\s*/",        # matches 10,000/
+        r"\b([\d,]{3,})\b",     # fallback for large numbers
+    ]
+
+    amount_digits = None
+    for pattern in digit_patterns:
+        match = re.search(pattern, text)
+        if match:
+            amount_digits = match.group(1)
+            break
+
+    return amount_digits, amount_words
+WORD_TO_NUM = {
+    "ZERO": 0, "ONE": 1, "TWO": 2, "THREE": 3, "FOUR": 4,
+    "FIVE": 5, "SIX": 6, "SEVEN": 7, "EIGHT": 8, "NINE": 9,
+    "TEN": 10, "ELEVEN": 11, "TWELVE": 12, "THIRTEEN": 13,
+    "FOURTEEN": 14, "FIFTEEN": 15, "SIXTEEN": 16,
+    "SEVENTEEN": 17, "EIGHTEEN": 18, "NINETEEN": 19,
+    "TWENTY": 20, "THIRTY": 30, "FORTY": 40,
+    "FIFTY": 50, "SIXTY": 60, "SEVENTY": 70,
+    "EIGHTY": 80, "NINETY": 90,
+}
+
+MULTIPLIERS = {
+    "HUNDRED": 100,
+    "THOUSAND": 1_000,
+    "LAKH": 100_000, "LAKHS": 100_000,
+    "CRORE": 10_000_000, "CRORES": 10_000_000,
+}
+
+
+def words_to_number(words: str | None) -> int | None:
+    if not words:
+        return None
+
+    words = (
+        words.replace("RUPEES", "")
+             .replace("ONLY", "")
+             .strip()
+    )
+
+    total = 0
+    current = 0
+
+    for token in words.split():
+        if token in WORD_TO_NUM:
+            current += WORD_TO_NUM[token]
+        elif token in MULTIPLIERS:
+            if current == 0:
+                current = 1
+            current *= MULTIPLIERS[token]
+            total += current
+            current = 0
+        else:
+            return None  # unsafe OCR
+
+    return total + current
+def normalize_digits(digits: str | None) -> int | None:
+    if not digits:
+        return None
+    return int(digits.replace(",", ""))
+from ultralytics import YOLO
+from pathlib import Path
+# Load YOLOv8 nano model (custom trained)
+YOLO_MODEL_PATH = Path("models/amount_words_yolov8n.pt")
+yolo_words_model = None
+
+def get_yolo_model():
+    global yolo_words_model
+
+    if not YOLO_MODEL_PATH.exists():
+        return None  # ❗ model not available → skip YOLO safely
+
+    if yolo_words_model is None:
+        yolo_words_model = YOLO(str(YOLO_MODEL_PATH))
+
+    return yolo_words_model
+def yolo_detect_amount_words(image: np.ndarray):
+    model = get_yolo_model()
+    if model is None:
+        return None
+
+    results = model(image, conf=0.4, verbose=False)
+
+    for r in results:
+        if r.boxes is None:
+            continue
+        for box in r.boxes:
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            return x1, y1, x2, y2
+
+    return None
+
+@app.post("/extract-cheque-amount")
+async def extract_cheque_amount(file: UploadFile = File(...)):
+    image_bytes = await file.read()
+    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    image_np = np.array(image)
+
+    # ---------- WORDS OCR (FAST PATH) ----------
+    processed_full = preprocess(image_np)
+    text_full = pytesseract.image_to_string(
+        processed_full,
+        config="--psm 6"
+    )
+
+    # ---------- DIGITS OCR ----------
+    roi = crop_amount_digits_roi(image_np)
+    roi_processed = preprocess_digits(roi)
+
+    text_digits = pytesseract.image_to_string(
+        roi_processed,
+        config="--psm 7 -c tessedit_char_whitelist=0123456789,/"
+    )
+
+    amount_digits, amount_words = extract_amount(
+        (text_full + " " + text_digits).upper()
+    )
+
+    digit_value = normalize_digits(amount_digits)
+    word_value = words_to_number(amount_words)
+
+    # ---------- INITIAL VERIFICATION ----------
+    if digit_value is None or word_value is None:
+        status = "UNVERIFIED"
+    elif digit_value == word_value:
+        status = "MATCH"
+    else:
+        status = "MISMATCH"
+
+    # ---------- YOLO FALLBACK ----------
+    used_yolo=False
+    if status == "UNVERIFIED":
+        bbox = yolo_detect_amount_words(image_np)
+
+        if bbox:
+            used_yolo = True
+            x1, y1, x2, y2 = bbox
+
+            words_roi = image_np[y1:y2, x1:x2]
+            processed_words = preprocess(words_roi)
+
+            retry_text = pytesseract.image_to_string(
+                processed_words,
+                config="--psm 6"
+            )
+
+            retry_words = extract_amount(retry_text.upper())[1]
+            retry_word_value = words_to_number(retry_words)
+
+            if retry_word_value is not None and retry_word_value == digit_value:
+                status = "MATCH"
+                amount_words = retry_words
+                word_value = retry_word_value
+
+    return {
+    "amount_digits": amount_digits,
+    "amount_words": amount_words,
+    "digits_value": digit_value,
+    "words_value": word_value,
+    "verification_status": status,
+    "used_yolo_fallback": used_yolo,
+    "raw_ocr_text": text_full,
+    "digits_roi_ocr": text_digits,
+}
+
