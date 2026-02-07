@@ -695,7 +695,7 @@ async def verify_digit_only(
             }
 
         threshold_pct = confidence_threshold * 100
-        buffer_pct = threshold_pct - 5  # ⭐ 5% ambiguity buffer
+        buffer_pct = threshold_pct - 5  
 
         analysis = []
         final_digits = []
