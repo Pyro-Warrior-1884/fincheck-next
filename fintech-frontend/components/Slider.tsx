@@ -114,6 +114,7 @@ export default function DropdownFAB() {
               <NavItem href="/results" label="Results" />
               <NavItem href="/banking-demo" label="Verify Image" variant="info" />
               <NavItem href="/digit-verify" label="Digit Verify" variant="success" />
+              <NavItem href="/cheque" label="Cheque Verify" variant="cheque-success"/>
 
               <div className="divider my-1" />
 
