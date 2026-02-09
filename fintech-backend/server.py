@@ -24,12 +24,11 @@ from pymongo import MongoClient
 from model_def import MNISTCNN
 from download_modes import ensure_models
 import re
-import cv2
 import pytesseract
-import numpy as np
-from fastapi import FastAPI, UploadFile, File
-from PIL import Image
 import io
+from torchvision.datasets import CIFAR10
+from model_def import CIFARCNN
+
 
 
 load_dotenv()
@@ -82,6 +81,15 @@ MODEL_FILES = [
     "ws_mnist.pth",
 ]
 
+CIFAR_MODEL_FILES = [
+    "baseline_cifar.pth",
+    "kd_cifar.pth",
+    "lrf_cifar.pth",
+    "pruned_cifar.pth",
+    "quantized_cifar.pth",
+    "ws_cifar.pth",
+]
+
 
 # ==================================================
 # PDF HELPER → BUILD METRIC TABLE
@@ -132,39 +140,66 @@ def build_perturbation_transform(
 
     return transforms.Compose(t)
 
+def build_cifar_perturbation_transform(
+    blur=0, rotation=0, noise_std=0
+):
+    t = [transforms.Resize((32, 32))]
+
+    if rotation > 0:
+        t.append(transforms.RandomRotation(rotation))
+
+    if blur > 0:
+        t.append(GaussianBlur(5, blur))
+
+    t.append(transforms.ToTensor())
+
+    if noise_std > 0:
+        t.append(transforms.Lambda(
+            lambda x: torch.clamp(x + noise_std * torch.randn_like(x), 0, 1)
+        ))
+
+    return transforms.Compose(t)
+
 
 def build_pdf_metric_rows(result_models: dict):
 
     rows = [[
         "Model",
-        "Confidence %",
-        "Latency ms",
+        "Confidence (%)",
+        "Latency (ms)",
         "Entropy",
         "Stability",
         "Risk Score"
     ]]
 
-    for model_name, data in result_models.items():
+    def pick(data, *keys, default="-"):
+        for k in keys:
+            if k in data and data[k] is not None:
+                return round(data[k], 4) if isinstance(data[k], float) else data[k]
+        return default
 
+    for model_name, data in result_models.items():
         eval_data = data.get("evaluation", {})
 
         rows.append([
             model_name,
-            data.get("confidence_percent") or data.get("confidence_mean"),
-            data.get("latency_ms") or data.get("latency_mean"),
-            data.get("entropy") or data.get("entropy_mean"),
-            data.get("stability") or data.get("stability_mean"),
-            eval_data.get("risk_score")
+            pick(data, "confidence_percent", "confidence_mean"),
+            pick(data, "latency_ms", "latency_mean"),
+            pick(data, "entropy", "entropy_mean"),
+            pick(data, "stability", "stability_mean"),
+            pick(eval_data, "risk_score"),
         ])
 
     return rows
 
+
 # =========================
 # LOAD KD MNIST MODEL
 # =========================
-MODEL = None
 
 MNIST_MODELS = {}
+CIFAR_MODELS = {}
+
 
 @app.on_event("startup")
 def startup_event():
@@ -196,6 +231,17 @@ def load_models():
 
     print("✅ MNIST models loaded into memory")
 
+    for f in CIFAR_MODEL_FILES:
+        model_path = MODEL_DIR / f
+        model = CIFARCNN().to(DEVICE)
+        model.load_state_dict(
+            torch.load(model_path, map_location=DEVICE),
+            strict=False
+        )
+        model.eval()
+        CIFAR_MODELS[f] = model
+
+    print("✅ CIFAR models loaded")
 
 def set_seed(seed: int):
     random.seed(seed)
@@ -209,6 +255,22 @@ def set_seed(seed: int):
 TRANSFORM = transforms.Compose([
     transforms.ToTensor(),  # already 28x28
 ])
+
+CIFAR_CLEAN = transforms.Compose([
+    transforms.Resize((32, 32)),
+    transforms.ToTensor(),
+])
+
+def CIFAR_NOISY(std=0.1):
+    return transforms.Compose([
+        transforms.Resize((32, 32)),
+        transforms.ToTensor(),
+        transforms.Lambda(
+            lambda x: torch.clamp(
+                x + std * torch.randn_like(x), 0, 1
+            )
+        ),
+    ])
 #==================
 # ENHANCE KEYSTROKE
 #==================
@@ -377,29 +439,23 @@ def NOISY_BLUR(std=0.2):
         )),
     ])
 
-def compute_far_frr(y_true, y_pred):
-    cm = confusion_matrix(y_true, y_pred, labels=list(range(10)))
+def compute_far_frr_generic(y_true, y_pred, num_classes):
+    cm = confusion_matrix(y_true, y_pred, labels=list(range(num_classes)))
     total = cm.sum()
 
-    FARs = []
-    FRRs = []
+    FARs, FRRs = [], []
 
-    for c in range(10):
+    for c in range(num_classes):
         TP = cm[c, c]
         FP = cm[:, c].sum() - TP
         FN = cm[c, :].sum() - TP
         TN = total - TP - FP - FN
 
-        FAR_c = FP / (FP + TN + 1e-8)
-        FRR_c = FN / (FN + TP + 1e-8)
+        FARs.append(FP / (FP + TN + 1e-8))
+        FRRs.append(FN / (FN + TP + 1e-8))
 
-        FARs.append(FAR_c)
-        FRRs.append(FRR_c)
+    return cm.tolist(), round(np.mean(FARs), 4), round(np.mean(FRRs), 4)
 
-    FAR = float(np.mean(FARs))
-    FRR = float(np.mean(FRRs))
-
-    return cm.tolist(), round(FAR, 4), round(FRR, 4)
 
 def risk_score(FAR, FRR, alpha=0.5, beta=0.5):
     return round(alpha * FAR + beta * FRR, 4)
@@ -427,7 +483,7 @@ def run_batch(images, true_labels=None):
         }
 
         if true_labels is not None:
-            cm, FAR, FRR = compute_far_frr(true_labels, preds)
+            cm, FAR, FRR = compute_far_frr_generic(true_labels, preds, num_classes=10)
             entry["evaluation"] = {
                 "confusion_matrix": cm,
                 "FAR": FAR,
@@ -439,6 +495,41 @@ def run_batch(images, true_labels=None):
 
     return out
 
+@torch.inference_mode()
+def run_batch_cifar(images, true_labels=None):
+    batch = torch.stack(images).to(DEVICE)
+    out = {}
+
+    for name, model in CIFAR_MODELS.items():
+        start = time.perf_counter()
+        logits = model(batch)
+        probs = torch.softmax(logits, dim=1)
+        preds = probs.argmax(dim=1).cpu().numpy()
+
+        entry = {
+            "latency_ms": round((time.perf_counter() - start) * 1000 / len(batch), 3),
+            "confidence_percent": round(
+                probs.max(dim=1).values.mean().item() * 100, 2
+            ),
+            "entropy": round(
+                float(-(probs * torch.log(probs + 1e-8)).sum(dim=1).mean()), 4
+            ),
+            "stability": round(float(logits.std()), 4),
+            "ram_mb": 0.0,
+        }
+
+        if true_labels is not None:
+            cm, FAR, FRR = compute_far_frr_generic(true_labels, preds, num_classes=10)
+            entry["evaluation"] = {
+                "confusion_matrix": cm,
+                "FAR": FAR,
+                "FRR": FRR,
+                "risk_score": risk_score(FAR, FRR),
+            }
+
+        out[name] = entry
+
+    return out
 
 # ==================================================
 # INFERENCE (MULTI RUN – NOISY)
@@ -477,9 +568,10 @@ def run_noisy_multi_eval(build_fn, true_labels, runs=5):
 
         repeated_labels = true_labels * runs
 
-        cm, FAR, FRR = compute_far_frr(
+        cm, FAR, FRR = compute_far_frr_generic(
             repeated_labels,
-            all_preds[m]
+            all_preds[m],
+            num_classes=10
         )
 
         entry["evaluation"] = {
@@ -501,7 +593,7 @@ async def run(
     image: UploadFile = File(...),
     expected_digit: int = Form(...),
 
-    # ⭐ NEW — STRESS CONTROLS
+    # ⭐ STRESS CONTROLS
     blur: float = Form(0),
     rotation: float = Form(0),
     noise: float = Form(0),
@@ -509,48 +601,6 @@ async def run(
 ):
     img = Image.open(io.BytesIO(await image.read())).convert("L")
 
-    # ⭐ If any stress param applied → use perturb transform
-    if blur > 0 or rotation > 0 or noise > 0 or erase > 0:
-
-        transform = build_perturbation_transform(
-            blur=blur,
-            rotation=rotation,
-            noise_std=noise,
-            erase_pct=erase
-        )
-
-        tensor_img = transform(img)
-
-    else:
-        tensor_img = CLEAN(img)
-
-    return run_batch(
-        [tensor_img],
-        true_labels=[expected_digit]
-    )
-# ==================================================
-# DATASET (WITH OPTIONAL STRESS SUPPORT)
-# ==================================================
-@app.post("/run-dataset")
-async def run_dataset(
-    dataset_name: str = Form(None),
-    zip_file: UploadFile = File(None),
-
-    # ⭐ NEW OPTIONAL STRESS PARAMS
-    blur: float = Form(0),
-    rotation: float = Form(0),
-    noise: float = Form(0),
-    erase: float = Form(0),
-):
-    base = MNIST(root=DATA_DIR, train=False, download=True)
-
-    if not dataset_name and not zip_file:
-        raise HTTPException(
-            400,
-            "dataset_name or zip_file required"
-        )
-
-    # ⭐ STRESS TRANSFORM (if any param used)
     use_stress = blur > 0 or rotation > 0 or noise > 0 or erase > 0
 
     if use_stress:
@@ -560,75 +610,171 @@ async def run_dataset(
             noise_std=noise,
             erase_pct=erase
         )
+        tensor_img = transform(img)
     else:
-        transform = CLEAN
+        tensor_img = CLEAN(img)
 
-    # ==================================================
-    # PREBUILT DATASETS
-    # ==================================================
+    # ---------- RUN INFERENCE ----------
+    mnist_results = run_batch(
+        [tensor_img],
+        true_labels=[expected_digit]
+    )
+
+    # ---------- BUILD DOCUMENT ----------
+    doc = {
+        "data": {
+            "MNIST": mnist_results
+        },
+        "meta": {
+            "evaluation_type": "SINGLE",
+            "source": "IMAGE_UPLOAD",
+            "expected_digit": expected_digit,
+            "stress_applied": use_stress,
+            "createdAt": datetime.utcnow(),
+        }
+    }
+
+    inserted = mongo_results.insert_one(doc)
+
+    # ---------- RETURN ID ----------
+    return {
+        "id": str(inserted.inserted_id)
+    }
+@app.post("/run-dataset")
+async def run_dataset(
+    dataset_name: str = Form(None),
+
+    # ⭐ STRESS PARAMS
+    blur: float = Form(0),
+    rotation: float = Form(0),
+    noise: float = Form(0),
+    erase: float = Form(0),
+):
+    # --------------------------------------------------
+    # VALIDATION
+    # --------------------------------------------------
+    if not dataset_name:
+        raise HTTPException(400, "dataset_name or zip_file required")
+
+    # --------------------------------------------------
+    # LOAD DATASETS
+    # --------------------------------------------------
+    base = MNIST(root=DATA_DIR, train=False, download=True)
+    cifar = CIFAR10(root=DATA_DIR, train=False, download=True)
+
+    # --------------------------------------------------
+    # STRESS FLAG
+    # --------------------------------------------------
+    use_stress = blur > 0 or rotation > 0 or noise > 0 or erase > 0
+
+    # --------------------------------------------------
+    # CIFAR PIPELINE
+    # --------------------------------------------------
+    cifar_transform = (
+        build_cifar_perturbation_transform(
+            blur=blur,
+            rotation=rotation,
+            noise_std=noise
+        )
+        if use_stress
+        else CIFAR_CLEAN
+    )
+
+    MAX_CIFAR = 1000
+    cifar_imgs = [cifar_transform(cifar[i][0]) for i in range(MAX_CIFAR)]
+    cifar_lbls = [cifar[i][1] for i in range(MAX_CIFAR)]
+    cifar_results = run_batch_cifar(cifar_imgs, cifar_lbls)
+
+    # --------------------------------------------------
+    # MNIST PIPELINE
+    # --------------------------------------------------
+    if use_stress:
+        mnist_transform = build_perturbation_transform(
+            blur=blur,
+            rotation=rotation,
+            noise_std=noise,
+            erase_pct=erase
+        )
+    else:
+        mnist_transform = CLEAN
+
+    # --------------------------------------------------
+    # MNIST DATASET SELECTION
+    # --------------------------------------------------
+    images, labels = [], []
 
     if dataset_name == "MNIST_100":
-        images = [transform(base[i][0]) for i in range(100)]
-        labels = [base[i][1] for i in range(100)]
-        results = run_batch(images, labels)
-
+        limit = 100
     elif dataset_name == "MNIST_500":
-        images = [transform(base[i][0]) for i in range(500)]
-        labels = [base[i][1] for i in range(500)]
-        results = run_batch(images, labels)
-
+        limit = 500
     elif dataset_name == "MNIST_FULL":
-        images = [transform(base[i][0]) for i in range(len(base))]
-        labels = [base[i][1] for i in range(len(base))]
-        results = run_batch(images, labels)
-
-    # ==================================================
-    # LEGACY NOISY DATASETS (KEEP THEM WORKING)
-    # ==================================================
-
+        limit = len(base)
     elif dataset_name == "MNIST_NOISY_100":
         labels = [base[i][1] for i in range(100)]
-        results = run_noisy_multi_eval(
+        mnist_results = run_noisy_multi_eval(
             lambda: [NOISY()(base[i][0]) for i in range(100)],
             true_labels=labels
         )
-
+        limit = 100
     elif dataset_name == "MNIST_NOISY_500":
         labels = [base[i][1] for i in range(500)]
-        results = run_noisy_multi_eval(
+        mnist_results = run_noisy_multi_eval(
             lambda: [NOISY()(base[i][0]) for i in range(500)],
             true_labels=labels
         )
-
+        limit = 500
     elif dataset_name == "MNIST_NOISY_BLUR_100":
         labels = [base[i][1] for i in range(100)]
-        results = run_noisy_multi_eval(
+        mnist_results = run_noisy_multi_eval(
             lambda: [NOISY_BLUR()(base[i][0]) for i in range(100)],
             true_labels=labels
         )
-
+        limit = 100
     elif dataset_name == "MNIST_NOISY_BLUR_500":
         labels = [base[i][1] for i in range(500)]
-        results = run_noisy_multi_eval(
+        mnist_results = run_noisy_multi_eval(
             lambda: [NOISY_BLUR()(base[i][0]) for i in range(500)],
             true_labels=labels
         )
-
+        limit = 500
     else:
         raise HTTPException(400, "Unknown dataset")
 
-    return {
-        "dataset_type": dataset_name,
-        "num_images": len(base),
-        "stress_applied": use_stress,
-        "stress_config": {
-            "blur": blur,
-            "rotation": rotation,
-            "noise": noise,
-            "erase": erase
-        } if use_stress else None,
-        "models": results,
+    # --------------------------------------------------
+    # NORMAL MNIST RUN
+    # --------------------------------------------------
+    if not dataset_name.startswith("MNIST_NOISY"):
+        images = [mnist_transform(base[i][0]) for i in range(limit)]
+        labels = [base[i][1] for i in range(limit)]
+        mnist_results = run_batch(images, labels)
+
+    # --------------------------------------------------
+    # BUILD DOCUMENT
+    # --------------------------------------------------
+    doc = {
+        "data": {
+            "MNIST": mnist_results,
+            "CIFAR": cifar_results
+        },
+        "meta": {
+            "evaluation_type": "DATASET",
+            "source": "PREBUILT",
+            "dataset_type": dataset_name,
+            "num_images": limit,
+            "stress_applied": use_stress,
+            "createdAt": datetime.utcnow(),
+        }
     }
+
+    inserted = mongo_results.insert_one(doc)
+
+    # --------------------------------------------------
+    # RETURN ID
+    # --------------------------------------------------
+    return {
+        "id": str(inserted.inserted_id)
+    }
+
 
 # ==================================================
 # OCR
@@ -778,169 +924,86 @@ async def verify_digit_only(
 # ==================================================
 # PDF EXPORT
 # ==================================================
-@app.post("/export-pdf")
-async def export_pdf(
-    dataset_name: str = Form(None),
-    image: UploadFile = File(None),
-    expected_digit: int = Form(None),
-):
-    try:
-
-        # ---------- RUN INFERENCE ----------
-        if dataset_name:
-            dataset_result = await run_dataset(dataset_name)
-            models = dataset_result["models"]
-            meta = {
-                "type": "DATASET",
-                "dataset": dataset_name,
-                "num_images": dataset_result["num_images"]
-            }
-
-        elif image:
-            img = Image.open(io.BytesIO(await image.read())).convert("L")
-            models = run_batch(
-                [CLEAN(img)],
-                true_labels=[expected_digit] if expected_digit is not None else None
-            )
-
-            meta = {
-                "type": "SINGLE_IMAGE",
-                "expected_digit": expected_digit
-            }
-
-        else:
-            raise HTTPException(400, "Provide dataset_name OR image")
-
-# ---------- SAVE RESULT ----------
-        mongo_results.insert_one({
-                "data": models,
-                "meta": meta,
-                "export_type": "PDF_ONLY",
-                "createdAt": datetime.utcnow()
-            })
-
-
-
-        # ---------- BUILD PDF ----------
-        buffer = io.BytesIO()
-        styles = getSampleStyleSheet()
-        story = []
-
-        # ---------- TITLE ----------
-        story.append(Paragraph("MNIST Evaluation Report", styles["Title"]))
-        story.append(Spacer(1, 12))
-
-        story.append(Paragraph(
-            f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
-            styles["Normal"]
-        ))
-        story.append(Spacer(1, 10))
-
-        # ---------- META ----------
-        story.append(Paragraph("Experiment Settings", styles["Heading2"]))
-
-        for k, v in meta.items():
-            story.append(Paragraph(f"{k}: {v}", styles["Normal"]))
-
-        story.append(Spacer(1, 16))
-
-        # ---------- METRIC TABLE ----------
-        story.append(Paragraph("Model Metrics", styles["Heading2"]))
-
-        table_data = build_pdf_metric_rows(models)
-        story.append(Table(table_data))
-        story.append(Spacer(1, 20))
-
-        # ---------- CONFUSION MATRICES ----------
-        story.append(Paragraph("Confusion Matrices", styles["Heading2"]))
-
-        for model_name, data in models.items():
-            eval_data = data.get("evaluation")
-
-            if not eval_data:
-                continue
-
-            story.append(Paragraph(model_name, styles["Heading3"]))
-            story.append(Table(eval_data["confusion_matrix"]))
-            story.append(Spacer(1, 12))
-
-        # ---------- BUILD ----------
-        pdf = SimpleDocTemplate(buffer)
-        pdf.build(story)
-
-        buffer.seek(0)
-
-        return StreamingResponse(
-            buffer,
-            media_type="application/pdf",
-            headers={
-                "Content-Disposition": "attachment; filename=mnist_report.pdf"
-            }
-        )
-
-    except Exception as e:
-        raise HTTPException(500, str(e))
-
 from bson import ObjectId
+from fastapi import HTTPException
+from fastapi.responses import StreamingResponse
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table
+from reportlab.lib.styles import getSampleStyleSheet
+from datetime import datetime
+import io
 
 @app.get("/export/pdf/{id}")
 def export_pdf_from_db(id: str):
     try:
-
+        # =========================
+        # FETCH RESULT FROM DB
+        # =========================
         doc = mongo_results.find_one({"_id": ObjectId(id)})
 
         if not doc:
             raise HTTPException(404, "Result not found")
 
-        models = doc["data"]
+        models_by_family = doc["data"]   # { MNIST: {...}, CIFAR: {...} }
         meta = doc.get("meta", {})
 
+        # =========================
+        # PDF SETUP
+        # =========================
         buffer = io.BytesIO()
         styles = getSampleStyleSheet()
         story = []
 
         # ---------- TITLE ----------
-        story.append(Paragraph("MNIST Evaluation Report", styles["Title"]))
+        story.append(Paragraph("Model Evaluation Report", styles["Title"]))
         story.append(Spacer(1, 12))
 
-        story.append(Paragraph(
-            f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
-            styles["Normal"]
-        ))
-        story.append(Spacer(1, 10))
+        story.append(
+            Paragraph(
+                f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}",
+                styles["Normal"],
+            )
+        )
+        story.append(Spacer(1, 16))
 
         # ---------- META ----------
         story.append(Paragraph("Experiment Settings", styles["Heading2"]))
-
         for k, v in meta.items():
             story.append(Paragraph(f"{k}: {v}", styles["Normal"]))
-
-        story.append(Spacer(1, 16))
-
-        # ---------- METRICS ----------
-        story.append(Paragraph("Model Metrics", styles["Heading2"]))
-
-        table_data = build_pdf_metric_rows(models)
-        story.append(Table(table_data))
         story.append(Spacer(1, 20))
 
-        # ---------- CONFUSION MATRICES ----------
-        story.append(Paragraph("Confusion Matrices", styles["Heading2"]))
+        # =========================
+        # FAMILY-WISE RESULTS
+        # =========================
+        for family, models in models_by_family.items():
 
-        for model_name, data in models.items():
-            eval_data = data.get("evaluation")
+            # ---- METRICS TABLE ----
+            story.append(Paragraph(f"{family} Models", styles["Heading2"]))
+            story.append(Table(build_pdf_metric_rows(models)))
+            story.append(Spacer(1, 20))
 
-            if not eval_data:
-                continue
+            # ---- CONFUSION MATRICES ----
+            story.append(
+                Paragraph(f"{family} Confusion Matrices", styles["Heading3"])
+            )
 
-            story.append(Paragraph(model_name, styles["Heading3"]))
-            story.append(Table(eval_data["confusion_matrix"]))
-            story.append(Spacer(1, 12))
+            for model_name, data in models.items():
+                eval_data = data.get("evaluation")
+                if not eval_data:
+                    continue
 
-        # ---------- BUILD ----------
+                story.append(
+                    Paragraph(model_name, styles["Heading4"])
+                )
+                story.append(Table(eval_data["confusion_matrix"]))
+                story.append(Spacer(1, 12))
+
+            story.append(Spacer(1, 20))
+
+        # =========================
+        # BUILD PDF
+        # =========================
         pdf = SimpleDocTemplate(buffer)
         pdf.build(story)
-
         buffer.seek(0)
 
         return StreamingResponse(
@@ -948,11 +1011,13 @@ def export_pdf_from_db(id: str):
             media_type="application/pdf",
             headers={
                 "Content-Disposition": f"attachment; filename=result_{id}.pdf"
-            }
+            },
         )
 
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
 
 def preprocess(image: np.ndarray) -> np.ndarray:
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -1156,3 +1221,13 @@ async def extract_cheque_amount(file: UploadFile = File(...)):
     "digits_roi_ocr": text_digits,
 }
 
+from bson import ObjectId
+
+@app.get("/results/{id}")
+def get_result(id: str):
+    doc = mongo_results.find_one({"_id": ObjectId(id)})
+    if not doc:
+        raise HTTPException(404, "Result not found")
+
+    doc["_id"] = str(doc["_id"])
+    return doc

@@ -1,13 +1,11 @@
 import { NextResponse } from "next/server";
-import { connectMongo } from "@/lib/mongodb";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
   try {
-
-    // ---------- Read Incoming Form ----------
+    // ---------- Read incoming form ----------
     const incomingForm = await req.formData();
 
     const datasetName = incomingForm.get("dataset_name");
@@ -29,28 +27,22 @@ export async function POST(req: Request) {
       );
     }
 
-    // ==================================================
-    // ⭐ IMPORTANT FIX → Forward ALL Form Fields
-    // ==================================================
+    // ---------- Forward ALL fields exactly ----------
     const forwardForm = new FormData();
-
     incomingForm.forEach((value, key) => {
       forwardForm.append(key, value as any);
     });
 
     // ---------- Call FastAPI ----------
-    const r = await fetch(
-      `${API_URL}/run-dataset`,
-      {
-        method: "POST",
-        body: forwardForm,
-      }
-    );
+    const r = await fetch(`${API_URL}/run-dataset`, {
+      method: "POST",
+      body: forwardForm,
+    });
 
     const text = await r.text();
 
     if (!r.ok) {
-      console.error("Backend /run-dataset failed:", text);
+      console.error("FastAPI /run-dataset failed:", text);
       return NextResponse.json(
         { error: text },
         { status: 500 }
@@ -59,41 +51,25 @@ export async function POST(req: Request) {
 
     const data = JSON.parse(text);
 
-    if (!data.models) {
+    // ✅ EXPECT ONLY `id`
+    if (!data.id) {
+      console.error("Unexpected FastAPI response:", data);
       return NextResponse.json(
-        { error: "Malformed backend response" },
+        { error: "Backend did not return result id" },
         { status: 500 }
       );
     }
 
-    // ---------- Store in Mongo ----------
-    const db = await connectMongo();
-
-    const result = await db
-      .collection("model_results")
-      .insertOne({
-        data: data.models,
-        meta: {
-          evaluation_type: "DATASET",
-          source: zipFile ? "CUSTOM_ZIP" : "PREBUILT",
-          dataset_type: data.dataset_type,
-          num_images: data.num_images,
-          stress_applied: data.stress_applied,
-          stress_config: data.stress_config,
-        },
-        createdAt: new Date(),
-      });
-
+    // ---------- RETURN ID TO FRONTEND ----------
     return NextResponse.json({
-      id: result.insertedId.toString(),
+      id: data.id,
     });
 
   } catch (err) {
     console.error("run-dataset API error:", err);
-
     return NextResponse.json(
       { error: "Internal server error" },
       { status: 500 }
     );
   }
-}
+} 
