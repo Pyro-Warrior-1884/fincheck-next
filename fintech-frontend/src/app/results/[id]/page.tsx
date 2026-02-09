@@ -5,7 +5,6 @@ import { useParams, useRouter } from "next/navigation"
 import ChartSection from "../../../../components/charts/ChartSection"
 import type { ChartItem } from "../../../../components/metrics/types"
 import { ConfusionMatrix } from "../../../../components/confusion-matrix"
-import type { ConfusionMatrixModel } from "../../../../components/confusion-matrix"
 
 /* ================= CONSTANTS ================= */
 
@@ -59,6 +58,7 @@ export default function ResultPage() {
 
   const [doc, setDoc] = useState<ResultDoc | null>(null)
   const [loading, setLoading] = useState(true)
+  const [exporting, setExporting] = useState(false)
   const [selectedModel, setSelectedModel] = useState("ALL")
 
   useEffect(() => {
@@ -68,22 +68,58 @@ export default function ResultPage() {
       .finally(() => setLoading(false))
   }, [id])
 
+  /* ================= EXPORT PDF ================= */
+
+  async function exportPdf() {
+    try {
+      setExporting(true)
+      const res = await fetch(`/api/export/pdf/${id}`)
+      if (!res.ok) throw new Error()
+
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+
+      const a = document.createElement("a")
+      a.href = url
+      a.download = `evaluation_${id}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      alert("PDF export failed")
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  /* ================= DATA ================= */
+
   const mnistData = doc?.data?.MNIST
-  const hasCifar = !!doc?.data?.CIFAR
   const datasetType = doc?.meta?.dataset_type
+  const hasCifar = !!doc?.data?.CIFAR
 
   const chartData = useMemo<ChartItemWithRisk[]>(() => {
     if (!mnistData) return []
 
     return MODEL_ORDER.map((model) => {
       const v = mnistData[model] ?? {}
+
       return {
         model,
+
         confidence_percent: v.confidence_percent ?? v.confidence_mean ?? 0,
+        confidence_std: v.confidence_std ?? 0,
+
         latency_ms: v.latency_ms ?? v.latency_mean ?? 0,
+        latency_std: v.latency_std ?? 0,
+
         entropy: v.entropy ?? v.entropy_mean ?? 0,
+        entropy_std: v.entropy_std ?? 0,
+
         stability: v.stability ?? v.stability_mean ?? 0,
+        stability_std: v.stability_std ?? 0,
+
         ram_delta_mb: v.ram_mb ?? 0,
+
         risk_score: v.evaluation?.risk_score ?? 1,
       }
     })
@@ -108,14 +144,14 @@ export default function ResultPage() {
   )[0]
 
   function getBadges(model: string) {
-    const badges: string[] = []
-    if (model === safestModel?.model) badges.push("🛡 Safest")
-    if (model === balancedModel?.model) badges.push("⚖️ Balanced")
+    const b: string[] = []
+    if (model === safestModel?.model) b.push("🛡 Safest")
+    if (model === balancedModel?.model) b.push("⚖️ Balanced")
     if (model === highestConfidenceModel?.model)
-      badges.push("🎯 Highest Accuracy")
+      b.push("🎯 Highest Accuracy")
     if (model === fastestSafeModel?.model)
-      badges.push("⚡ Fastest Safe")
-    return badges
+      b.push("⚡ Fastest Safe")
+    return b
   }
 
   if (loading) return <p className="p-8">Loading…</p>
@@ -133,14 +169,25 @@ export default function ResultPage() {
       {/* HEADER */}
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-semibold">Evaluation Results</h1>
-        {hasCifar && (
+
+        <div className="flex gap-3">
+          {hasCifar && (
+            <button
+              onClick={() => router.push(`/compare/${id}`)}
+              className="bg-purple-600 text-white px-4 py-2 rounded-lg"
+            >
+              Compare MNIST vs CIFAR
+            </button>
+          )}
+
           <button
-            onClick={() => router.push(`/compare/${id}`)}
-            className="bg-purple-600 text-white px-4 py-2 rounded-lg"
+            onClick={exportPdf}
+            disabled={exporting}
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg disabled:opacity-50"
           >
-            Compare MNIST vs CIFAR
+            {exporting ? "Exporting…" : "Export PDF"}
           </button>
-        )}
+        </div>
       </div>
 
       {/* SUMMARY */}
