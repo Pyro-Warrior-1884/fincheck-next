@@ -468,3 +468,8 @@ For academic, research, and demonstration purposes only.
 
 **Fincheck is not an OCR demo.**
 It is a **risk-aware digit validation framework for financial systems.**
+
+
+- API Specification → [`docs/api-spec.md`](docs/api-spec.md)
+- Architecture Overview → [`docs/architecture.md`](docs/architecture.md)
+- Evaluation Metrics → [`docs/evaluation-metrics.md`](docs/evaluation-metrics.md)
