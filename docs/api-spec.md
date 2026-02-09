@@ -1,8 +1,3 @@
-Nice, this is a **solid backend** 👌
-Below is a **clean, project-ready API Specification Sheet** you can directly put into docs / README / report.
-
----
-
 # 📘 API Specification Sheet
 
 **Project:** MNIST & CIFAR Model Evaluation, OCR & Cheque Verification Service
