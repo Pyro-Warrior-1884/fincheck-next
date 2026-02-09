@@ -1,4 +1,18 @@
 # **Fincheck — Confidence-Aware Cheque Digit Validation System**
+[![Documentation](https://img.shields.io/badge/docs-live-brightgreen)](https://mukesh1352.github.io/fincheck-next/)
+[![GitHub Repo](https://img.shields.io/badge/github-repo-blue)](https://github.com/mukesh1352/fincheck-next)
+![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-4.x-blue?logo=typescript&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-teal?logo=fastapi&logoColor=white)
+![PyTorch](https://img.shields.io/badge/PyTorch-Deep%20Learning-red?logo=pytorch&logoColor=white)
+![OpenCV](https://img.shields.io/badge/OpenCV-Computer%20Vision-green?logo=opencv&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-App%20Router-black?logo=nextdotjs)
+![Bun](https://img.shields.io/badge/Bun-JS%20Runtime-black?logo=bun)
+![Tailwind CSS](https://img.shields.io/badge/TailwindCSS-Utility--First-blue?logo=tailwindcss)
+![MongoDB](https://img.shields.io/badge/MongoDB-Database-green?logo=mongodb)
+![Docusaurus](https://img.shields.io/badge/Docusaurus-Docs-blue?logo=docusaurus)
+![GitHub Pages](https://img.shields.io/badge/GitHub%20Pages-Deployed-brightgreen?logo=github)
+
 
 **Risk-Aware Handwritten Digit Verification for Financial Documents**
 
