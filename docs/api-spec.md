@@ -1,4 +1,4 @@
-# 📘 API Specification Sheet
+#  API Specification Sheet
 
 **Project:** MNIST & CIFAR Model Evaluation, OCR & Cheque Verification Service
 **Base URL:** `http://<host>:<port>`
@@ -6,11 +6,6 @@
 
 ---
 
-## 🔹 1. Health & Startup
-
-> Models are auto-loaded on server startup. No explicit health endpoint defined.
-
----
 
 ## 🔹 2. Run Single Image Inference (MNIST)
 
