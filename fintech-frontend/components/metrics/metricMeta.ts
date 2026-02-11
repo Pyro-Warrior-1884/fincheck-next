@@ -4,8 +4,8 @@ export const METRIC_META: Record<
   keyof ChartItem,
   {
     label: string
-    description: string        
-    userHint: string          
+    description: string
+    userHint: string
     higherIsBetter: boolean
   }
 > = {
@@ -76,6 +76,13 @@ export const METRIC_META: Record<
     label: "Memory Usage (MB)",
     description: "Extra memory used during inference.",
     userHint: "Lower memory usage is better for deployment.",
+    higherIsBetter: false,
+  },
+
+  risk_score: {
+    label: "Risk Score",
+    description: "Overall risk derived from confidence, stability, and errors.",
+    userHint: "Lower risk indicates a safer and more reliable model.",
     higherIsBetter: false,
   },
 }

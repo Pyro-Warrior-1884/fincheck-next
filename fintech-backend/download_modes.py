@@ -1,43 +1,57 @@
-# backend/download_models.py
 import requests
 from pathlib import Path
 
+# Base paths
 BASE_DIR = Path(__file__).resolve().parent
 MODEL_DIR = BASE_DIR / "model"
-
-print("📁 Model dir:", MODEL_DIR)
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
+# GitHub release info
 RELEASE_TAG = "v1-models"
 BASE_URL = f"https://github.com/mukesh1352/fincheck-next/releases/download/{RELEASE_TAG}"
 
-MODELS = [
-    "baseline_mnist.pth",
-    "kd_mnist.pth",
-    "lrf_mnist.pth",
-    "pruned_mnist.pth",
-    "quantized_mnist.pth",
-    "ws_mnist.pth",
+# Model variants and datasets
+VARIANTS = [
+    "baseline",
+    "kd",
+    "lrf",
+    "pruned",
+    "quantized",
+    "ws",
 ]
 
-def download():
-    for name in MODELS:
-        dest = MODEL_DIR / name
-        if dest.exists():
-            print(f" {name} already exists")
-            continue
+DATASETS = ["mnist", "cifar"]
 
+# Build model filenames dynamically
+MODELS = [
+    f"{variant}_{dataset}.pth"
+    for variant in VARIANTS
+    for dataset in DATASETS
+]
+
+def ensure_models():
+    missing = [name for name in MODELS if not (MODEL_DIR / name).exists()]
+
+    if not missing:
+        print("✅ All model files already present")
+        return
+
+    print(f"⬇️ Downloading {len(missing)} missing model(s)")
+
+    for name in missing:
         url = f"{BASE_URL}/{name}"
-        print(f"⬇️ Downloading {url}")
+        dest = MODEL_DIR / name
 
-        r = requests.get(url, stream=True)
-        r.raise_for_status()
+        print(f"⬇️ {name}")
+        response = requests.get(url, stream=True, timeout=30)
+        response.raise_for_status()
 
         with open(dest, "wb") as f:
-            for chunk in r.iter_content(8192):
-                f.write(chunk)
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
 
-    print("🎉 All models downloaded successfully")
+    print("🎉 Model download complete")
 
 if __name__ == "__main__":
-    download()
+    ensure_models()

@@ -1,16 +1,13 @@
 export type ChartItem = {
   model: string
-
-  // --- core metrics (always present) ---
   confidence_percent: number
+  confidence_std: number
   latency_ms: number
+  latency_std: number
   entropy: number
+  entropy_std: number
   stability: number
+  stability_std: number
   ram_delta_mb: number
-
-  // --- optional stats for noisy datasets ---
-  confidence_std?: number
-  latency_std?: number
-  entropy_std?: number
-  stability_std?: number
+  risk_score?: number   // 👈 add this
 }

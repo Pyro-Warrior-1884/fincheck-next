@@ -1,4 +1,18 @@
 # **Fincheck — Confidence-Aware Cheque Digit Validation System**
+[![Documentation](https://img.shields.io/badge/docs-live-brightgreen)](https://mukesh1352.github.io/fincheck-next/)
+[![GitHub Repo](https://img.shields.io/badge/github-repo-blue)](https://github.com/mukesh1352/fincheck-next)
+![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-4.x-blue?logo=typescript&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-teal?logo=fastapi&logoColor=white)
+![PyTorch](https://img.shields.io/badge/PyTorch-Deep%20Learning-red?logo=pytorch&logoColor=white)
+![OpenCV](https://img.shields.io/badge/OpenCV-Computer%20Vision-green?logo=opencv&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-App%20Router-black?logo=nextdotjs)
+![Bun](https://img.shields.io/badge/Bun-JS%20Runtime-black?logo=bun)
+![Tailwind CSS](https://img.shields.io/badge/TailwindCSS-Utility--First-blue?logo=tailwindcss)
+![MongoDB](https://img.shields.io/badge/MongoDB-Database-green?logo=mongodb)
+![Docusaurus](https://img.shields.io/badge/Docusaurus-Docs-blue?logo=docusaurus)
+![GitHub Pages](https://img.shields.io/badge/GitHub%20Pages-Deployed-brightgreen?logo=github)
+
 
 **Risk-Aware Handwritten Digit Verification for Financial Documents**
 
@@ -22,35 +36,116 @@ Traditional OCR and digit-recognition systems optimize for accuracy and always e
 
 Fincheck is **not an OCR engine**. It is a **confidence-aware digit validity filter** for financial systems.
 
+In addition, Fincheck evaluates model robustness under distribution shift by
+benchmarking the same compressed architectures on the CIFAR dataset.
+This enables comparison between **in-distribution safety (MNIST)** and
+**out-of-distribution generalization (CIFAR)**, revealing which compression
+methods degrade gracefully under real-world visual complexity.
+
+
 ---
 
 ## Core Principle
 
-> **If the system is not confident, it must refuse.**
+> **If the system is not confident, it must refuse.**  
+> **A model that performs well only on MNIST but collapses under CIFAR is considered unsafe for real-world deployment.**
+
+
 
 ---
 
 ## System Architecture
 
-```
-User Image / Dataset
-        ↓
-Preprocessing (OpenCV)
-        ↓
-Digit Segmentation (Connected Components)
-        ↓
-MNIST Normalization (28×28 + Center-of-Mass)
-        ↓
-Multi-Model MNIST Inference (PyTorch)
-        ↓
-Confidence · Entropy · Stability
-        ↓
-FAR · FRR · Risk Score
-        ↓
-VALID / AMBIGUOUS / INVALID Verdict
-```
+### System Architecture I — Confidence-Aware Digit Validation Pipeline (MNIST Risk Filter)
+
+```mermaid
+flowchart TD
+    A[User Image Upload]
+    B[Preprocessing - OpenCV]
+    C[Digit Segmentation]
+    D[MNIST Normalization 28x28]
+    E[MNIST CNN Models]
+    F[Confidence Entropy Stability]
+    G[FAR FRR Risk Score]
+    H[VALID / AMBIGUOUS / INVALID]
+
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+    E --> F
+    F --> G
+    G --> H
+````
+
+**Purpose:**
+Safely validate handwritten digits by rejecting low-confidence or ambiguous predictions instead of guessing.
 
 ---
+
+### System Architecture II — MNIST vs CIFAR Compression Robustness Comparison
+
+```mermaid
+flowchart TD
+    A[Dataset Input]
+    B[Optional Stress Perturbations]
+    C[Batch Inference]
+
+    D1[MNIST Models]
+    D2[CIFAR Models]
+
+    E[Metrics Extraction]
+    F[FAR FRR Risk Score]
+    G[Generalization Comparison]
+
+    A --> B
+    B --> C
+    C --> D1
+    C --> D2
+    D1 --> E
+    D2 --> E
+    E --> F
+    F --> G
+```
+
+**Purpose:**
+Compare compressed model safety under **in-distribution (MNIST)** and
+**out-of-distribution (CIFAR)** conditions to expose robustness gaps.
+
+---
+
+### System Architecture III — Cheque Amount Verification (Digits + Text + YOLO Fallback)
+
+```mermaid
+flowchart TD
+    A[Cheque Image]
+    B[OCR Full Image]
+    C[Digit ROI Extraction]
+    D[Digit OCR]
+    E[Amount Parsing]
+    F[Word to Number Conversion]
+    G[Verification Logic]
+
+    H[YOLO Detection]
+    I[Retry OCR]
+
+    A --> B
+    A --> C
+    C --> D
+    B --> E
+    D --> E
+    E --> F
+    F --> G
+
+    G -->|Unverified| H
+    H --> I
+    I --> F
+```
+
+**Purpose:**
+Verify cheque amounts by cross-checking numeric and written values with a safe fallback mechanism.
+
+----
 
 ## Why MNIST Is Used
 
@@ -64,6 +159,13 @@ Digits that do not resemble canonical handwritten digits result in:
 * Automatic rejection
 
 MNIST acts as a **risk filter**, not an OCR system.
+
+CIFAR is intentionally more complex and visually diverse than MNIST.
+While MNIST measures digit plausibility and safety, CIFAR is used to
+evaluate how compression techniques generalize under higher visual entropy.
+
+A safe model should perform well on MNIST and degrade gracefully on CIFAR.
+CIFAR results are interpreted only after MNIST acceptance, never as a standalone decision signal.
 
 ---
 
@@ -84,8 +186,6 @@ MNIST acts as a **risk filter**, not an OCR system.
 
 Segmentation is treated as a **risk control stage**. Borderline components are rejected.
 
----
-
 ## Multi-Model Inference
 
 All models are loaded at startup and evaluated in parallel:
@@ -100,6 +200,22 @@ All models are loaded at startup and evaluated in parallel:
 | ws_mnist.pth        | Weight Sharing         |
 
 This allows model comparison using **risk metrics**, not just accuracy.
+
+
+The same compression techniques are mirrored for CIFAR:
+
+| Model               | Dataset | Purpose                    |
+|--------------------|---------|----------------------------|
+| baseline_cifar.pth | CIFAR   | Generalization baseline    |
+| kd_cifar.pth       | CIFAR   | Distilled robustness test  |
+| lrf_cifar.pth      | CIFAR   | Low-rank stress behavior   |
+| pruned_cifar.pth   | CIFAR   | Sparsity degradation test  |
+| quantized_cifar.pth| CIFAR   | Precision sensitivity test |
+| ws_cifar.pth       | CIFAR   | Shared-weight robustness   |
+
+MNIST and CIFAR results are never merged; they are compared to expose
+robustness gaps introduced by compression.
+
 
 ---
 
@@ -137,6 +253,8 @@ Runtime perturbations simulate real cheque conditions:
 
 Used in `/run` and `/run-dataset`.
 
+The same perturbations are applied to CIFAR to analyze whether compression-induced failures amplify under visual complexity.
+
 ---
 
 ## API Endpoints
@@ -149,6 +267,8 @@ Used in `/run` and `/run-dataset`.
 | `POST /run-dataset`       | Dataset benchmarking           |
 | `POST /export-pdf`        | Generate PDF evaluation report |
 | `GET /export/pdf/{id}`    | Rebuild report from database   |
+| `GET /compare/{id}` | MNIST vs CIFAR model comparison |
+
 
 ---
 
@@ -178,6 +298,10 @@ The UI is designed for experimentation:
 * Preprocessed image preview
 * Model sorting by risk / latency / confidence
 * Experiment presets
+* MNIST vs CIFAR comparison dashboard
+* Delta visualization (accuracy, latency, risk)
+* Dataset-level winner identification
+* Compression generalization ranking
 
 ---
 
@@ -324,6 +448,7 @@ http://localhost:3000
 * Human-in-the-loop financial review systems
 * ML robustness research
 * Risk-aware ML demonstrations
+* Compression robustness and generalization analysis
 
 ---
 
@@ -357,3 +482,8 @@ For academic, research, and demonstration purposes only.
 
 **Fincheck is not an OCR demo.**
 It is a **risk-aware digit validation framework for financial systems.**
+
+
+- API Specification → [`docs/api-spec.md`](docs/api-spec.md)
+- Architecture Overview → [`docs/architecture.md`](docs/architecture.md)
+- Evaluation Metrics → [`docs/evaluation-metrics.md`](docs/evaluation-metrics.md)
