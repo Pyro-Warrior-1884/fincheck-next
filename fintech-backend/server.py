@@ -232,16 +232,25 @@ def load_models():
     print("✅ MNIST models loaded into memory")
 
     for f in CIFAR_MODEL_FILES:
+        if "quantized" in f.lower():
+            print(f"⚠️ Skipping quantized CIFAR model: {f}")
+            continue
+
         model_path = MODEL_DIR / f
+
+        if not model_path.exists():
+            raise RuntimeError(f"❌ Model file missing: {f}")
+
         model = CIFARCNN().to(DEVICE)
-        model.load_state_dict(
-            torch.load(model_path, map_location=DEVICE),
-            strict=False
-        )
+        state = torch.load(model_path, map_location=DEVICE)
+
+        model.load_state_dict(state, strict=False)
         model.eval()
+
         CIFAR_MODELS[f] = model
 
-    print("✅ CIFAR models loaded")
+    print("✅ CIFAR models loaded (non-quantized)")
+
 
 def set_seed(seed: int):
     random.seed(seed)
